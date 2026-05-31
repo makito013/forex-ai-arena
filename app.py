@@ -60,31 +60,48 @@ with tab5:
         selected_period_label = st.selectbox("Historical Data Period", list(period_options.keys()))
         selected_period, selected_interval = period_options[selected_period_label]
     with col_ag:
-        num_agents = st.number_input("Number of Agents to Train", min_value=1, max_value=10, value=1)
+        mode = st.radio("Training Mode", ["Create New Agent(s)", "Train Existing Agent"])
+        
+        existing_agent_name = None
+        num_agents = 1
+        
+        if mode == "Train Existing Agent":
+            existing_agents = session.query(Agent).all()
+            if existing_agents:
+                agent_names = [a.name for a in existing_agents]
+                existing_agent_name = st.selectbox("Select Agent", agent_names)
+            else:
+                st.warning("No existing agents found in database.")
+        else:
+            num_agents = st.number_input("Number of Agents to Train", min_value=1, max_value=10, value=1)
         
     if st.button("🚀 Start Training Session"):
-        st.divider()
-        overall_status = st.empty()
-        progress_bar = st.progress(0.0)
-        status_text = st.empty()
-        
-        success, results = run_training_session(
-            symbol=selected_symbol,
-            period=selected_period,
-            interval=selected_interval,
-            num_agents=num_agents,
-            config=engine.config,
-            progress_bar=progress_bar,
-            status_text=status_text,
-            overall_status=overall_status
-        )
-        
-        if success:
-            progress_bar.progress(1.0)
-            status_text.text("Training Phase Completed.")
-            overall_status.success(f"🎉 Successfully trained {num_agents} agent(s) on {selected_symbol}!")
-            st.table(results)
-            st.info("Go to the Leaderboard tab to see how they rank globally!")
+        if mode == "Train Existing Agent" and not existing_agent_name:
+            st.error("Please create an agent first or select 'Create New Agent(s)'.")
+        else:
+            st.divider()
+            overall_status = st.empty()
+            progress_bar = st.progress(0.0)
+            status_text = st.empty()
+            
+            success, results = run_training_session(
+                symbol=selected_symbol,
+                period=selected_period,
+                interval=selected_interval,
+                num_agents=num_agents,
+                config=engine.config,
+                progress_bar=progress_bar,
+                status_text=status_text,
+                overall_status=overall_status,
+                existing_agent_name=existing_agent_name
+            )
+            
+            if success:
+                progress_bar.progress(1.0)
+                status_text.text("Training Phase Completed.")
+                overall_status.success(f"🎉 Successfully trained on {selected_symbol}!")
+                st.table(results)
+                st.info("Go to the Leaderboard tab to see how they rank globally!")
 
 with tab4:
     st.subheader("Live Market Prices")

@@ -31,7 +31,7 @@ class StreamlitCallback(BaseCallback):
 def generate_agent_name():
     return "Agent_" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
 
-def run_training_session(symbol, period, interval, num_agents, config, progress_bar, status_text, overall_status):
+def run_training_session(symbol, period, interval, num_agents, config, progress_bar, status_text, overall_status, existing_agent_name=None):
     engine = FinancialEngine('config.yaml')
     fetcher = MarketDataFetcher(config)
     session = init_db()
@@ -44,17 +44,34 @@ def run_training_session(symbol, period, interval, num_agents, config, progress_
         return False, []
 
     data_length = len(df)
-    overall_status.success(f"Data fetched! {data_length} candles available. Training {num_agents} agent(s).")
+    
+    if existing_agent_name:
+        num_agents = 1
+        overall_status.success(f"Data fetched! {data_length} candles. Continuing training for {existing_agent_name}.")
+    else:
+        overall_status.success(f"Data fetched! {data_length} candles available. Training {num_agents} new agent(s).")
     
     results = []
     
     for i in range(num_agents):
-        agent_name = generate_agent_name()
+        if existing_agent_name:
+            agent_name = existing_agent_name
+            db_agent = session.query(Agent).filter_by(name=agent_name).first()
+            initial_balance = db_agent.balance if db_agent else config['arena']['initial_balance']
+        else:
+            agent_name = generate_agent_name()
+            initial_balance = config['arena']['initial_balance']
+            
         overall_status.info(f"Initializing Environment for Agent {i+1}/{num_agents}: {agent_name}...")
         
-        env = ForexEnv(df=df, engine=engine, initial_balance=config['arena']['initial_balance'])
+        env = ForexEnv(df=df, engine=engine, initial_balance=initial_balance)
         
-        model = PPO("MlpPolicy", env, verbose=0)
+        model_path = f"models/{agent_name}.zip"
+        if existing_agent_name and os.path.exists(model_path):
+            overall_status.info(f"Loading existing model weights for {agent_name}...")
+            model = PPO.load(model_path, env=env)
+        else:
+            model = PPO("MlpPolicy", env, verbose=0)
         
         # Train for approximately 3 epochs over the dataset
         timesteps = min(50000, data_length * 3)
@@ -67,8 +84,15 @@ def run_training_session(symbol, period, interval, num_agents, config, progress_
         final_balance = env.balance
         strategy_label = f"PPO_{symbol}_{period}"
         
-        new_agent = Agent(name=agent_name, strategy_type=strategy_label, balance=final_balance)
-        session.add(new_agent)
+        if existing_agent_name and db_agent:
+            db_agent.balance = final_balance
+            if symbol not in db_agent.strategy_type:
+                db_agent.strategy_type += f" + {symbol}"
+            strategy_label = db_agent.strategy_type
+        else:
+            new_agent = Agent(name=agent_name, strategy_type=strategy_label, balance=final_balance)
+            session.add(new_agent)
+            
         session.commit()
         
         os.makedirs('models', exist_ok=True)
