@@ -13,6 +13,10 @@ assets:
       name: "USD/JPY"
     - symbol: "GBPUSD=X"
       name: "GBP/USD"
+    - symbol: "CHF=X"
+      name: "USD/CHF"
+    - symbol: "GC=F"
+      name: "Gold/USD"
 
 arena:
   initial_balance: 10000.0 # Starting fake money for each AI

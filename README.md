@@ -71,21 +71,17 @@ streamlit run app.py
 ```
 *Isso abrirá automaticamente uma aba no seu navegador acessando `http://localhost:8501`.*
 
-### B. Treinando uma nova IA
-Para colocar uma nova IA na arena para aprender a operar (baixar dados, interagir com o ambiente e salvar os pesos neurais), execute:
+### B. Treinando novas IAs (Agora direto pelo Portal!)
+Para treinar novos agentes com gráficos passados e testar diferentes estratégias e ativos (como Ouro ou USD/CHF), você não precisa mais rodar scripts de terminal!
 
-```bash
-python train_agent.py
-```
+1. Abra o painel do Streamlit (`http://localhost:8501`).
+2. Vá até a aba **"Training Arena"**.
+3. Selecione o **Par de Moeda** desejado (ex: Ouro, EUR/USD).
+4. Selecione o **Período Histórico** (ex: 1 Mês, 1 Ano). Gráficos de 1 Ano irão acelerar o aprendizado, pois testam o robô contra ciclos completos de mercado.
+5. Selecione a quantidade de Agentes.
+6. Clique em **Start Training Session** e acompanhe a barra de progresso!
 
-**O que este comando faz?**
-1. Consulta o `config.yaml` e baixa os últimos dias de gráficos do `yfinance`.
-2. Cria o ambiente de trading `ForexEnv` aplicando as regras de spread e taxa de 5%.
-3. Inicia um agente usando o algoritmo **PPO** (`stable-baselines3`).
-4. Treina o agente e, ao final, registra o nome e o saldo final no banco de dados SQLite (`database.db`).
-5. Salva o "cérebro" da IA na pasta `/models`.
-
-Você verá o agente recém-treinado aparecer instantaneamente no seu Dashboard Streamlit!
+*(Nota: O script antigo `train_agent.py` ainda existe na pasta como um exemplo de linha de comando, mas a UI é a forma oficial de operar).*
 
 ---
 

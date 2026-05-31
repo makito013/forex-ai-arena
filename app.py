@@ -9,6 +9,7 @@ sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 from src.db_models import init_db, Agent, OpenPosition
 from src.engine.financial import FinancialEngine
 from src.data.fetcher import MarketDataFetcher
+from src.engine.trainer import run_training_session
 import time
 
 st.set_page_config(page_title="Forex AI Arena", layout="wide")
@@ -38,7 +39,52 @@ st.sidebar.write(f"Leverage: 1:{engine.leverage}")
 st.sidebar.write(f"Brokerage Fee: {engine.fee_pct * 100}% on margin")
 
 # Setup Tabs
-tab1, tab2, tab3, tab4 = st.tabs(["Arena Setup (Test Engine)", "Leaderboard", "Open Positions", "Market Data"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Arena Setup", "Leaderboard", "Open Positions", "Market Data", "Training Arena"])
+
+with tab5:
+    st.header("🧠 Train New AI Agents")
+    st.write("Configure and launch a training session directly from the UI. The agents will play against historical data for the chosen period and asset.")
+    
+    col_sym, col_per, col_ag = st.columns(3)
+    with col_sym:
+        pairs = [p['symbol'] for p in engine.config['assets']['pairs']]
+        selected_symbol = st.selectbox("Currency Pair / Asset", pairs)
+    with col_per:
+        period_options = {
+            "5 Days (1m chart)": ("5d", "1m"),
+            "1 Month (15m chart)": ("1mo", "15m"),
+            "3 Months (1h chart)": ("3mo", "1h"),
+            "1 Year (1d chart)": ("1y", "1d"),
+            "Max Available (1d chart)": ("max", "1d")
+        }
+        selected_period_label = st.selectbox("Historical Data Period", list(period_options.keys()))
+        selected_period, selected_interval = period_options[selected_period_label]
+    with col_ag:
+        num_agents = st.number_input("Number of Agents to Train", min_value=1, max_value=10, value=1)
+        
+    if st.button("🚀 Start Training Session"):
+        st.divider()
+        overall_status = st.empty()
+        progress_bar = st.progress(0.0)
+        status_text = st.empty()
+        
+        success, results = run_training_session(
+            symbol=selected_symbol,
+            period=selected_period,
+            interval=selected_interval,
+            num_agents=num_agents,
+            config=engine.config,
+            progress_bar=progress_bar,
+            status_text=status_text,
+            overall_status=overall_status
+        )
+        
+        if success:
+            progress_bar.progress(1.0)
+            status_text.text("Training Phase Completed.")
+            overall_status.success(f"🎉 Successfully trained {num_agents} agent(s) on {selected_symbol}!")
+            st.table(results)
+            st.info("Go to the Leaderboard tab to see how they rank globally!")
 
 with tab4:
     st.subheader("Live Market Prices")
