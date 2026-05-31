@@ -12,6 +12,7 @@ from src.data.fetcher import MarketDataFetcher
 from src.engine.trainer import run_training_session
 from src.engine.competition import run_competition
 import time
+import plotly.graph_objects as go
 
 st.set_page_config(page_title="Forex AI Arena", layout="wide")
 
@@ -152,8 +153,47 @@ with tab_comp:
                     st.table(comp_results)
 
 with tab_data:
+    st.subheader("Interactive Market Charts")
+    
+    col_d_sym, col_d_per = st.columns(2)
+    with col_d_sym:
+        data_pairs = [p['symbol'] for p in engine.config['assets']['pairs']]
+        data_symbol = st.selectbox("Asset", data_pairs, key="data_sym")
+    with col_d_per:
+        data_period_options = {
+            "Recent 5 Days (1m)": ("5d", "1m"),
+            "Recent 1 Month (15m)": ("1mo", "15m"),
+            "3 Months (1h)": ("3mo", "1h")
+        }
+        data_period_label = st.selectbox("Historical View", list(data_period_options.keys()), key="data_per")
+        d_period, d_interval = data_period_options[data_period_label]
+        
+    if st.button("Load Chart"):
+        with st.spinner("Fetching data and rendering chart..."):
+            df = fetcher.fetch_historical_data(data_symbol, period=d_period, interval=d_interval)
+            
+            if df.empty:
+                st.error("No data found or Yahoo Finance restricted this timeframe.")
+            else:
+                fig = go.Figure(data=[go.Candlestick(x=df.index,
+                                open=df['Open'].squeeze(),
+                                high=df['High'].squeeze(),
+                                low=df['Low'].squeeze(),
+                                close=df['Close'].squeeze())])
+                
+                fig.update_layout(
+                    title=f"{data_symbol} Candlestick Chart ({d_interval})",
+                    yaxis_title="Price",
+                    xaxis_title="Date/Time",
+                    xaxis_rangeslider_visible=False,
+                    template="plotly_dark"
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+    st.divider()
     st.subheader("Live Market Prices")
-    if st.button("Refresh Prices"):
+    if st.button("Refresh Quick Prices"):
         with st.spinner("Fetching from yfinance..."):
             prices = fetcher.fetch_current_prices()
             cols = st.columns(len(prices))
