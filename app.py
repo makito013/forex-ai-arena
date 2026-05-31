@@ -49,20 +49,54 @@ with tab_train:
     st.header("🧠 Train New AI Agents")
     st.write("Configure and launch a training session directly from the UI. The agents will play against historical data for the chosen period and asset.")
     
+    t_data_source = st.radio("Data Source", ["Yahoo Finance (Online)", "Local CSV (Offline)"], key="train_ds")
+    
+    selected_symbol = "CSV"
+    selected_period = "max"
+    selected_interval = "15m"
+    use_csv = False
+    csv_path = None
+    
     col_sym, col_per, col_ag = st.columns(3)
-    with col_sym:
-        pairs = [p['symbol'] for p in engine.config['assets']['pairs']]
-        selected_symbol = st.selectbox("Currency Pair / Asset", pairs)
-    with col_per:
-        period_options = {
-            "5 Days (1m chart)": ("5d", "1m"),
-            "1 Month (15m chart)": ("1mo", "15m"),
-            "3 Months (1h chart)": ("3mo", "1h"),
-            "1 Year (1d chart)": ("1y", "1d"),
-            "Max Available (1d chart)": ("max", "1d")
-        }
-        selected_period_label = st.selectbox("Historical Data Period", list(period_options.keys()))
-        selected_period, selected_interval = period_options[selected_period_label]
+    
+    if t_data_source == "Yahoo Finance (Online)":
+        with col_sym:
+            pairs = [p['symbol'] for p in engine.config['assets']['pairs']]
+            selected_symbol = st.selectbox("Currency Pair / Asset", pairs)
+        with col_per:
+            period_options = {
+                "5 Days (1m chart)": ("5d", "1m"),
+                "1 Month (15m chart)": ("1mo", "15m"),
+                "3 Months (1h chart)": ("3mo", "1h"),
+                "1 Year (1d chart)": ("1y", "1d"),
+                "Max Available (1d chart)": ("max", "1d")
+            }
+            selected_period_label = st.selectbox("Historical Data Period", list(period_options.keys()))
+            selected_period, selected_interval = period_options[selected_period_label]
+    else:
+        use_csv = True
+        with col_sym:
+            csv_folder = "data/historical"
+            if not os.path.exists(csv_folder):
+                os.makedirs(csv_folder)
+            csv_files = [f for f in os.listdir(csv_folder) if f.endswith('.csv')]
+            if csv_files:
+                selected_csv = st.selectbox("Select CSV File", csv_files)
+                csv_path = os.path.join(csv_folder, selected_csv)
+            else:
+                st.warning("No CSV files found in 'data/historical'.")
+        with col_per:
+            csv_interval_options = {
+                "1 Minute (1m)": "1m",
+                "5 Minutes (5m)": "5m",
+                "15 Minutes (15m)": "15m",
+                "30 Minutes (30m)": "30m",
+                "1 Hour (1h)": "1h",
+                "1 Day (1d)": "1d"
+            }
+            csv_int_label = st.selectbox("CSV Timeframe", list(csv_interval_options.keys()))
+            selected_interval = csv_interval_options[csv_int_label]
+            
     with col_ag:
         mode = st.radio("Training Mode", ["Create New Agent(s)", "Train Existing Agent"])
         
@@ -82,6 +116,8 @@ with tab_train:
     if st.button("🚀 Start Training Session"):
         if mode == "Train Existing Agent" and not existing_agent_name:
             st.error("Please create an agent first or select 'Create New Agent(s)'.")
+        elif use_csv and not csv_path:
+            st.error("Please place a CSV file in 'data/historical' and select it.")
         else:
             st.divider()
             overall_status = st.empty()
@@ -97,13 +133,15 @@ with tab_train:
                 progress_bar=progress_bar,
                 status_text=status_text,
                 overall_status=overall_status,
-                existing_agent_name=existing_agent_name
+                existing_agent_name=existing_agent_name,
+                use_csv=use_csv,
+                csv_path=csv_path
             )
             
             if success:
                 progress_bar.progress(1.0)
                 status_text.text("Training Phase Completed.")
-                overall_status.success(f"🎉 Successfully trained on {selected_symbol}!")
+                overall_status.success(f"🎉 Successfully trained!")
                 st.table(results)
                 st.info("Go to the Leaderboard tab to see how they rank globally!")
 
@@ -118,21 +156,54 @@ with tab_comp:
         agent_names = [a.name for a in existing_agents]
         selected_competitors = st.multiselect("Select Competitors", agent_names, default=agent_names[:2] if len(agent_names) >= 2 else agent_names)
         
+        c_data_source = st.radio("Competition Data Source", ["Yahoo Finance (Online)", "Local CSV (Offline)"], key="comp_ds")
+        
+        c_symbol = "CSV"
+        c_period = "max"
+        c_interval = "15m"
+        c_use_csv = False
+        c_csv_path = None
+        
         col_c_sym, col_c_per = st.columns(2)
-        with col_c_sym:
-            c_pairs = [p['symbol'] for p in engine.config['assets']['pairs']]
-            c_symbol = st.selectbox("Competition Asset", c_pairs, key="comp_sym")
-        with col_c_per:
-            c_period_options = {
-                "Recent 5 Days (1m)": ("5d", "1m"),
-                "Recent 1 Month (15m)": ("1mo", "15m")
-            }
-            c_period_label = st.selectbox("Competition Dataset", list(c_period_options.keys()))
-            c_period, c_interval = c_period_options[c_period_label]
+        
+        if c_data_source == "Yahoo Finance (Online)":
+            with col_c_sym:
+                c_pairs = [p['symbol'] for p in engine.config['assets']['pairs']]
+                c_symbol = st.selectbox("Competition Asset", c_pairs, key="comp_sym")
+            with col_c_per:
+                c_period_options = {
+                    "Recent 5 Days (1m)": ("5d", "1m"),
+                    "Recent 1 Month (15m)": ("1mo", "15m")
+                }
+                c_period_label = st.selectbox("Competition Dataset", list(c_period_options.keys()))
+                c_period, c_interval = c_period_options[c_period_label]
+        else:
+            c_use_csv = True
+            with col_c_sym:
+                csv_folder = "data/historical"
+                csv_files = [f for f in os.listdir(csv_folder) if f.endswith('.csv')] if os.path.exists(csv_folder) else []
+                if csv_files:
+                    c_selected_csv = st.selectbox("Select CSV File", csv_files, key="comp_csv_sel")
+                    c_csv_path = os.path.join(csv_folder, c_selected_csv)
+                else:
+                    st.warning("No CSV files found in 'data/historical'.")
+            with col_c_per:
+                c_csv_interval_options = {
+                    "1 Minute (1m)": "1m",
+                    "5 Minutes (5m)": "5m",
+                    "15 Minutes (15m)": "15m",
+                    "30 Minutes (30m)": "30m",
+                    "1 Hour (1h)": "1h",
+                    "1 Day (1d)": "1d"
+                }
+                c_csv_int_label = st.selectbox("CSV Timeframe", list(c_csv_interval_options.keys()), key="comp_csv_tf")
+                c_interval = c_csv_interval_options[c_csv_int_label]
             
         if st.button("🏆 Start Competition"):
             if not selected_competitors:
                 st.error("Select at least one competitor.")
+            elif c_use_csv and not c_csv_path:
+                st.error("Please place a CSV file in 'data/historical' and select it.")
             else:
                 st.divider()
                 status_text = st.empty()
@@ -145,7 +216,9 @@ with tab_comp:
                     interval=c_interval,
                     config=engine.config,
                     progress_bar=progress_bar,
-                    status_text=status_text
+                    status_text=status_text,
+                    use_csv=c_use_csv,
+                    csv_path=c_csv_path
                 )
                 
                 if success:

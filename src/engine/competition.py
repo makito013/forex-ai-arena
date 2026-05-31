@@ -17,15 +17,20 @@ def get_steps_per_day(interval):
     }
     return mapping.get(interval, 96)
 
-def run_competition(agent_names, symbol, period, interval, config, progress_bar, status_text):
+def run_competition(agent_names, symbol, period, interval, config, progress_bar, status_text, use_csv=False, csv_path=None):
     engine = FinancialEngine('config.yaml')
     fetcher = MarketDataFetcher(config)
     session = init_db()
     
-    status_text.text(f"Fetching competition data for {symbol}...")
-    df = fetcher.fetch_historical_data(symbol, period=period, interval=interval)
+    if use_csv and csv_path:
+        status_text.text(f"Loading competition data from CSV: {csv_path}...")
+        df = fetcher.fetch_from_csv(csv_path)
+    else:
+        status_text.text(f"Fetching competition data for {symbol}...")
+        df = fetcher.fetch_historical_data(symbol, period=period, interval=interval)
     
     if df.empty:
+        status_text.text("Failed to load competition data.")
         return False, []
 
     steps_per_day = get_steps_per_day(interval)

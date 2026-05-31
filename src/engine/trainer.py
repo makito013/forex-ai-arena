@@ -31,25 +31,32 @@ class StreamlitCallback(BaseCallback):
 def generate_agent_name():
     return "Agent_" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
 
-def run_training_session(symbol, period, interval, num_agents, config, progress_bar, status_text, overall_status, existing_agent_name=None):
+def run_training_session(symbol, period, interval, num_agents, config, progress_bar, status_text, overall_status, existing_agent_name=None, use_csv=False, csv_path=None):
     engine = FinancialEngine('config.yaml')
     fetcher = MarketDataFetcher(config)
     session = init_db()
     
-    overall_status.info(f"Fetching historical data for {symbol} ({period} / {interval})...")
-    df = fetcher.fetch_historical_data(symbol, period=period, interval=interval)
+    if use_csv and csv_path:
+        overall_status.info(f"Loading historical data from CSV: {csv_path}...")
+        df = fetcher.fetch_from_csv(csv_path)
+        # Try to infer symbol from filename if possible, otherwise use the dropdown symbol
+        symbol_label = os.path.basename(csv_path)
+    else:
+        overall_status.info(f"Fetching historical data for {symbol} ({period} / {interval})...")
+        df = fetcher.fetch_historical_data(symbol, period=period, interval=interval)
+        symbol_label = symbol
     
     if df.empty:
-        overall_status.error(f"Failed to fetch data for {symbol}. Training aborted.")
+        overall_status.error(f"Failed to fetch data for {symbol_label}. Training aborted.")
         return False, []
 
     data_length = len(df)
     
     if existing_agent_name:
         num_agents = 1
-        overall_status.success(f"Data fetched! {data_length} candles. Continuing training for {existing_agent_name}.")
+        overall_status.success(f"Data loaded! {data_length} candles. Continuing training for {existing_agent_name}.")
     else:
-        overall_status.success(f"Data fetched! {data_length} candles available. Training {num_agents} new agent(s).")
+        overall_status.success(f"Data loaded! {data_length} candles available. Training {num_agents} new agent(s).")
     
     results = []
     
@@ -66,7 +73,7 @@ def run_training_session(symbol, period, interval, num_agents, config, progress_
         
         # Calculate steps per day based on interval
         mapping = {"1m": 1440, "5m": 288, "15m": 96, "30m": 48, "1h": 24, "1d": 1}
-        steps_per_day = mapping.get(interval, 96)
+        steps_per_day = mapping.get(interval, 96) # Default to 96 if CSV timeframe unknown
         
         env = ForexEnv(df=df, engine=engine, initial_balance=initial_balance, steps_per_day=steps_per_day)
         
@@ -86,12 +93,12 @@ def run_training_session(symbol, period, interval, num_agents, config, progress_
         model.learn(total_timesteps=timesteps, callback=callback)
         
         final_balance = env.balance
-        strategy_label = f"PPO_{symbol}_{period}"
+        strategy_label = f"PPO_{symbol_label}" if use_csv else f"PPO_{symbol}_{period}"
         
         if existing_agent_name and db_agent:
             db_agent.balance = final_balance
-            if symbol not in db_agent.strategy_type:
-                db_agent.strategy_type += f" + {symbol}"
+            if symbol_label not in db_agent.strategy_type:
+                db_agent.strategy_type += f" + {symbol_label}"
             strategy_label = db_agent.strategy_type
         else:
             new_agent = Agent(name=agent_name, strategy_type=strategy_label, balance=final_balance)
@@ -104,7 +111,7 @@ def run_training_session(symbol, period, interval, num_agents, config, progress_
         
         results.append({
             "Agent": agent_name,
-            "Symbol": symbol,
+            "Symbol": symbol_label,
             "Strategy": strategy_label,
             "Final Balance": round(final_balance, 2)
         })

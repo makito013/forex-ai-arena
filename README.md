@@ -85,6 +85,32 @@ Para treinar novos agentes com gráficos passados e testar diferentes estratégi
 
 ---
 
+## 📊 Usando Dados Locais (Arquivos CSV)
+APIs gratuitas como o `yfinance` impõem limites severos (ex: máximo de 60 dias de histórico para gráficos de 15 minutos). Para contornar isso e treinar IAs em anos de histórico, você pode usar arquivos `.csv` extraídos diretamente do seu **MetaTrader** ou de fontes como HistData.com.
+
+**Como exportar e importar:**
+1. No MetaTrader, abra o gráfico desejado, aperte `Ctrl+S` (ou vá em Salvar Como) e salve o arquivo CSV.
+2. Coloque esse arquivo dentro da pasta `data/historical/` no raiz do projeto (crie a pasta se não existir).
+3. O CSV deve conter, no mínimo, as colunas: `Date` (ou Time), `Open`, `High`, `Low`, `Close`. A coluna de volume é opcional.
+4. No Dashboard (Training Arena ou Competition Arena), troque o "Data Source" para **Local CSV (Offline)** e selecione o seu arquivo!
+
+---
+
+## 🧠 Estratégia de Integração LLM (Llama 3)
+O projeto possui o esqueleto para consumir análises de sentimento do Llama 3 via `Ollama` (`src/ai/agents.py`). Porém, ele **não é chamado em tempo real durante o treinamento**.
+
+**Por que não em tempo real?**
+O treinamento por Reinforcement Learning processa milhares de velas por segundo. Se o código batesse na API do Ollama para ler o calendário econômico a cada vela de 15 minutos, o treinamento levaria semanas.
+
+**Como usar (Pré-Caching):**
+A arquitetura profissional projetada para este sistema exige um processo de *Pré-Caching*:
+1. Você deve baixar uma base de notícias/calendário econômico em CSV.
+2. Rodar um script isolado que envia todas as notícias para o Llama 3 pontuá-las de `-1.0` a `1.0`.
+3. Salvar esses "Sentiment Scores" em uma tabela no banco de dados SQLite com a data exata.
+4. O ambiente do ginásio (`ForexEnv`) fará um simples `SELECT` no banco para pegar o sentimento daquele minuto exato e injetá-lo como uma observação matemática (Float) no cérebro do agente PPO instantaneamente.
+
+---
+
 ## 📂 Estrutura do Projeto
 - `app.py`: Interface de usuário.
 - `train_agent.py`: Script principal de treinamento.
