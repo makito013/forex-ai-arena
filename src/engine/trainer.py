@@ -64,7 +64,11 @@ def run_training_session(symbol, period, interval, num_agents, config, progress_
             
         overall_status.info(f"Initializing Environment for Agent {i+1}/{num_agents}: {agent_name}...")
         
-        env = ForexEnv(df=df, engine=engine, initial_balance=initial_balance)
+        # Calculate steps per day based on interval
+        mapping = {"1m": 1440, "5m": 288, "15m": 96, "30m": 48, "1h": 24, "1d": 1}
+        steps_per_day = mapping.get(interval, 96)
+        
+        env = ForexEnv(df=df, engine=engine, initial_balance=initial_balance, steps_per_day=steps_per_day)
         
         model_path = f"models/{agent_name}.zip"
         if existing_agent_name and os.path.exists(model_path):

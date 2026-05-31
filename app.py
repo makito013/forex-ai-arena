@@ -10,6 +10,7 @@ from src.db_models import init_db, Agent, OpenPosition
 from src.engine.financial import FinancialEngine
 from src.data.fetcher import MarketDataFetcher
 from src.engine.trainer import run_training_session
+from src.engine.competition import run_competition
 import time
 
 st.set_page_config(page_title="Forex AI Arena", layout="wide")
@@ -39,9 +40,11 @@ st.sidebar.write(f"Leverage: 1:{engine.leverage}")
 st.sidebar.write(f"Brokerage Fee: {engine.fee_pct * 100}% on margin")
 
 # Setup Tabs
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["Arena Setup", "Leaderboard", "Open Positions", "Market Data", "Training Arena"])
+tab_setup, tab_board, tab_comp, tab_train, tab_data, tab_pos = st.tabs([
+    "Arena Setup (Math Test)", "Leaderboard", "Competition Arena ⚔️", "Training Arena 🧠", "Market Data", "Open Positions"
+])
 
-with tab5:
+with tab_train:
     st.header("🧠 Train New AI Agents")
     st.write("Configure and launch a training session directly from the UI. The agents will play against historical data for the chosen period and asset.")
     
@@ -103,7 +106,52 @@ with tab5:
                 st.table(results)
                 st.info("Go to the Leaderboard tab to see how they rank globally!")
 
-with tab4:
+with tab_comp:
+    st.header("⚔️ Competition Arena")
+    st.write("Put trained agents against each other on a new dataset! They will NOT learn here, only trade. The score is calculated based on profit % (1pt per 1%) and a penalty for inactivity (-1pt per day without profit).")
+    
+    existing_agents = session.query(Agent).all()
+    if not existing_agents:
+        st.warning("No agents available. Train some agents first!")
+    else:
+        agent_names = [a.name for a in existing_agents]
+        selected_competitors = st.multiselect("Select Competitors", agent_names, default=agent_names[:2] if len(agent_names) >= 2 else agent_names)
+        
+        col_c_sym, col_c_per = st.columns(2)
+        with col_c_sym:
+            c_pairs = [p['symbol'] for p in engine.config['assets']['pairs']]
+            c_symbol = st.selectbox("Competition Asset", c_pairs, key="comp_sym")
+        with col_c_per:
+            c_period_options = {
+                "Recent 5 Days (1m)": ("5d", "1m"),
+                "Recent 1 Month (15m)": ("1mo", "15m")
+            }
+            c_period_label = st.selectbox("Competition Dataset", list(c_period_options.keys()))
+            c_period, c_interval = c_period_options[c_period_label]
+            
+        if st.button("🏆 Start Competition"):
+            if not selected_competitors:
+                st.error("Select at least one competitor.")
+            else:
+                st.divider()
+                status_text = st.empty()
+                progress_bar = st.progress(0.0)
+                
+                success, comp_results = run_competition(
+                    agent_names=selected_competitors,
+                    symbol=c_symbol,
+                    period=c_period,
+                    interval=c_interval,
+                    config=engine.config,
+                    progress_bar=progress_bar,
+                    status_text=status_text
+                )
+                
+                if success:
+                    st.success("Competition concluded!")
+                    st.table(comp_results)
+
+with tab_data:
     st.subheader("Live Market Prices")
     if st.button("Refresh Prices"):
         with st.spinner("Fetching from yfinance..."):
@@ -113,38 +161,29 @@ with tab4:
                 with cols[i]:
                     st.metric(label=symbol, value=f"{price:.5f}" if price else "Error")
 
-with tab1:
+with tab_setup:
     st.subheader("Financial Engine Math Test")
+    st.info("💡 Note on 'Price': In real trading (MT4/5) you don't pick the opening price, it is executed at the market price automatically. This tab is just a calculator to verify the math logic (Margin, Leverage, and our strict 5% Brokerage Fee rules) at any hypothetical price you type.")
     col1, col2, col3 = st.columns(3)
     
     with col1:
         test_lots = st.number_input("Lots", value=0.01, step=0.01)
     with col2:
-        test_price = st.number_input("Price", value=1.1000, format="%.4f")
+        test_price = st.number_input("Hypothetical Open Price", value=1.1000, format="%.4f")
     with col3:
         st.write("Calculations")
         math_result = engine.open_position_math(test_lots, test_price)
         st.json(math_result)
 
-    if st.button("Create Test AI Agent"):
-        existing_agent = session.query(Agent).filter_by(name="TestAgent_01").first()
-        if not existing_agent:
-            new_agent = Agent(name="TestAgent_01", strategy_type="Manual_Test", balance=engine.config['arena']['initial_balance'])
-            session.add(new_agent)
-            session.commit()
-            st.success("Test Agent Created!")
-        else:
-            st.info("Test Agent already exists.")
-
-with tab2:
+with tab_board:
     st.subheader("AI Leaderboard")
-    agents = session.query(Agent).order_by(Agent.balance.desc()).all()
+    agents = session.query(Agent).order_by(Agent.score.desc(), Agent.balance.desc()).all()
     if agents:
-        st.table([{ "ID": a.id, "Name": a.name, "Strategy": a.strategy_type, "Balance ($)": round(a.balance, 2) } for a in agents])
+        st.table([{ "ID": a.id, "Name": a.name, "Global Score 🏆": a.score, "Balance ($)": round(a.balance, 2), "Strategy": a.strategy_type } for a in agents])
     else:
         st.write("No agents in the arena yet.")
 
-with tab3:
+with tab_pos:
     st.subheader("Current Open Positions")
     positions = session.query(OpenPosition).all()
     if positions:

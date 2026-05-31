@@ -10,6 +10,7 @@ class Agent(Base):
     name = Column(String, unique=True, nullable=False)
     strategy_type = Column(String, nullable=False) # e.g., 'RL_PPO', 'RL_A2C'
     balance = Column(Float, nullable=False, default=10000.0)
+    score = Column(Float, nullable=False, default=0.0)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     open_positions = relationship("OpenPosition", back_populates="agent")

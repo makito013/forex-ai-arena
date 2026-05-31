@@ -10,12 +10,13 @@ class ForexEnv(gym.Env):
     """
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, df: pd.DataFrame, engine: FinancialEngine, initial_balance=10000):
+    def __init__(self, df: pd.DataFrame, engine: FinancialEngine, initial_balance=10000, steps_per_day=96):
         super(ForexEnv, self).__init__()
         
         self.df = df
         self.engine = engine
         self.initial_balance = initial_balance
+        self.steps_per_day = steps_per_day
         
         # Actions: 0: Hold, 1: Buy (Long), 2: Sell (Short), 3: Close Position
         self.action_space = spaces.Discrete(4)
@@ -26,6 +27,9 @@ class ForexEnv(gym.Env):
         
         self.current_step = 0
         self.balance = self.initial_balance
+        self.score = 0.0
+        self.steps_since_last_profit = 0
+        
         self.current_position = None # None, 'BUY', 'SELL'
         self.entry_price = 0.0
         self.margin_invested = 0.0
@@ -82,6 +86,15 @@ class ForexEnv(gym.Env):
                 self.balance += pnl # Fee was already deducted at opening
                 reward = pnl
                 
+                # Scoring Logic
+                net_profit = pnl - self.engine.calculate_brokerage_fee(self.margin_invested)
+                profit_pct = (net_profit / self.margin_invested) * 100
+                if profit_pct > 0:
+                    points_earned = int(profit_pct) # 1 point per 1% profit
+                    self.score += points_earned
+                    if points_earned > 0:
+                        self.steps_since_last_profit = 0
+                
                 # Reset position
                 self.current_position = None
                 self.entry_price = 0.0
@@ -90,6 +103,13 @@ class ForexEnv(gym.Env):
         # Hold (Action 0) does nothing but lets time pass
         
         self.current_step += 1
+        self.steps_since_last_profit += 1
+        
+        # Penalty for inactivity
+        if self.steps_since_last_profit >= self.steps_per_day:
+            self.score -= 1.0
+            reward -= 1.0 # Small penalty to teach the RL agent to be active
+            self.steps_since_last_profit = 0
         
         # Check if episode is done (reached end of data or bankrupt)
         terminated = self.current_step >= len(self.df) - 1 or self.balance <= 0
@@ -100,7 +120,8 @@ class ForexEnv(gym.Env):
         
         info = {
             'balance': self.balance,
-            'position': self.current_position
+            'position': self.current_position,
+            'score': self.score
         }
         
         return obs, reward, terminated, truncated, info
@@ -109,6 +130,8 @@ class ForexEnv(gym.Env):
         super().reset(seed=seed)
         self.current_step = 0
         self.balance = self.initial_balance
+        self.score = 0.0
+        self.steps_since_last_profit = 0
         self.current_position = None
         self.entry_price = 0.0
         self.margin_invested = 0.0
