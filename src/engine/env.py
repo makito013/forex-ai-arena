@@ -20,78 +20,113 @@ class ForexEnv(gym.Env):
         self.initial_balance = initial_balance
         self.steps_per_day = steps_per_day
         
-        # Actions: 
-        # 1. Action Type (4): 0: Hold, 1: Buy, 2: Sell, 3: Close
-        # 2. Lot Size Index (3): 0: 0.01 (Micro), 1: 0.05 (Mini), 2: 0.10 (Standard-Micro)
+        # Actions: [ActionType(4), LotSizeIndex(3)]
         self.action_space = spaces.MultiDiscrete([4, 3])
         
-        # Observation space: 
-        # [rel_high, rel_low, rel_close, vol, pos_type, unreal_pnl, progress, sentiment, sma20_rel, sma50_rel, rsi]
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(11,), dtype=np.float32)
+        # Expanded Observation Space (22 variables):
+        # 1-3: Rel OHLC, 4: Vol, 5: Pos, 6: PnL, 7: Progress, 8: Sentiment
+        # 9-11: EMA Rel (21, 50, 200)
+        # 12-14: MACD (Line, Signal, Hist)
+        # 15: RSI, 16-17: Stoch (K, D)
+        # 18-19: Bollinger (Upper/Lower Rel)
+        # 20-21: Ichimoku (Kumo Top/Bottom Rel)
+        # 22: Pin Bar Signal (0/1)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(22,), dtype=np.float32)
         
         self.current_step = 0
         self.balance = self.initial_balance
         self.score = 0.0
         self.steps_since_last_profit = 0
         
-        # Take Profit / Stop Loss (Pips)
         self.tp_pips = 50 
         self.sl_pips = 30
         
-        # Ensure Sentiment column exists
         if 'sentiment' not in self.df.columns:
             self.df['sentiment'] = 0.0
         
-        self.current_position = None # None, 'BUY', 'SELL'
+        self.current_position = None
         self.entry_price = 0.0
         self.margin_invested = 0.0
-        self.lots = 0.01 # Default
-        
+        self.lots = 0.01
+
     def _prepare_indicators(self, df):
-        # Calculate Technical Indicators
         close = df['Close'].values.astype(float)
-        df['sma20'] = talib.SMA(close, timeperiod=20)
-        df['sma50'] = talib.SMA(close, timeperiod=50)
+        high = df['High'].values.astype(float)
+        low = df['Low'].values.astype(float)
+        
+        # Strategy 1, 2, 10: EMAs
+        df['ema21'] = talib.EMA(close, timeperiod=21)
+        df['ema50'] = talib.EMA(close, timeperiod=50)
+        df['ema200'] = talib.EMA(close, timeperiod=200)
+        
+        # Strategy 2: MACD
+        df['macd'], df['macd_signal'], df['macd_hist'] = talib.MACD(close, fastperiod=12, slowperiod=26, signalperiod=9)
+        
+        # Strategy 4: RSI
         df['rsi'] = talib.RSI(close, timeperiod=14)
         
-        # Replace NaNs
+        # Strategy 5: Stochastic
+        df['stoch_k'], df['stoch_d'] = talib.STOCH(high, low, close, fastk_period=14, slowk_period=3, slowd_period=3)
+        
+        # Strategy 6: Bollinger Bands
+        df['bb_up'], df['bb_mid'], df['bb_low'] = talib.BBANDS(close, timeperiod=20, nbdevup=2, nbdevdn=2)
+        
+        # Strategy 3: Ichimoku (simplified for current observation)
+        # Tenkan: 9, Kijun: 26, Senkou B: 52
+        df['tenkan'] = (df['High'].rolling(9).max() + df['Low'].rolling(9).min()) / 2
+        df['kijun'] = (df['High'].rolling(26).max() + df['Low'].rolling(26).min()) / 2
+        # Senkou Span A (plotted 26 ahead, so we look at value from 26 periods ago)
+        df['span_a'] = ((df['tenkan'] + df['kijun']) / 2).shift(26)
+        # Senkou Span B (plotted 26 ahead)
+        df['span_b'] = ((df['High'].rolling(52).max() + df['Low'].rolling(52).min()) / 2).shift(26)
+        
+        # Strategy 9: Pin Bar Detection
+        body = np.abs(df['Close'] - df['Open'])
+        total_range = df['High'] - df['Low']
+        df['pin_bar'] = ((body < total_range * 0.3) & ((df['High'] - np.maximum(df['Open'], df['Close'])) > total_range * 0.5) | 
+                         ((np.minimum(df['Open'], df['Close']) - df['Low']) > total_range * 0.5)).astype(float)
+        
+        # Strategy 7: Breakout (Rolling High/Low)
+        df['rolling_high_50'] = df['High'].rolling(50).max()
+        df['rolling_low_50'] = df['Low'].rolling(50).min()
+        
         df.ffill(inplace=True)
         df.fillna(0, inplace=True)
         return df
 
     def _next_observation(self):
-        # Current row data
-        current_row = self.df.iloc[self.current_step]
+        row = self.df.iloc[self.current_step]
+        open_val = float(row['Open'])
+        close_val = float(row['Close'])
         
-        # Relative OHLC (percentage change from Open)
-        open_val = float(current_row['Open'])
-        high_val = float(current_row['High'])
-        low_val = float(current_row['Low'])
-        close_val = float(current_row['Close'])
+        # Helper for relative values
+        rel = lambda val: (float(val) - close_val) / close_val if close_val != 0 else 0
         
-        rel_high = (high_val - open_val) / open_val
-        rel_low = (low_val - open_val) / open_val
-        rel_close = (close_val - open_val) / open_val
-        
-        # Indicators relative to price
-        sma20_rel = (float(current_row['sma20']) - close_val) / close_val if close_val != 0 else 0
-        sma50_rel = (float(current_row['sma50']) - close_val) / close_val if close_val != 0 else 0
-        rsi = float(current_row['rsi']) / 100.0 # Normalized 0-1
-        
-        obs = np.array([
-            rel_high,
-            rel_low,
-            rel_close,
-            float(current_row['Volume']) / 1000.0,
+        obs = [
+            (float(row['High']) - open_val) / open_val,
+            (float(row['Low']) - open_val) / open_val,
+            (close_val - open_val) / open_val,
+            float(row['Volume']) / 1000.0,
             1.0 if self.current_position == 'BUY' else (-1.0 if self.current_position == 'SELL' else 0.0),
             float(self._get_unrealized_pnl()) / self.initial_balance,
             float(self.current_step) / len(self.df),
-            float(current_row['sentiment']),
-            sma20_rel,
-            sma50_rel,
-            rsi
-        ], dtype=np.float32)
-        return obs
+            float(row['sentiment']),
+            rel(row['ema21']),
+            rel(row['ema50']),
+            rel(row['ema200']),
+            float(row['macd_hist']) / close_val if close_val != 0 else 0,
+            float(row['rsi']) / 100.0,
+            float(row['stoch_k']) / 100.0,
+            float(row['stoch_d']) / 100.0,
+            rel(row['bb_up']),
+            rel(row['bb_low']),
+            rel(np.maximum(row['span_a'], row['span_b'])), # Kumo Top
+            rel(np.minimum(row['span_a'], row['span_b'])), # Kumo Bottom
+            rel(row['rolling_high_50']), # Dist to 50-bar High
+            rel(row['rolling_low_50']),  # Dist to 50-bar Low
+            float(row['pin_bar'])
+        ]
+        return np.array(obs, dtype=np.float32)
 
     def _get_unrealized_pnl(self):
         if not self.current_position:

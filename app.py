@@ -389,17 +389,50 @@ with tab_board:
         st.write("No agents in the arena yet.")
 
 with tab_pos:
-    st.subheader("Current Open Positions")
+    st.subheader("Current Open Positions Summary")
+    
     positions = session.query(OpenPosition).all()
+    
     if positions:
-        st.table([{
-            "Agent": p.agent.name,
-            "Symbol": p.symbol,
-            "Type": p.position_type,
-            "Lots": p.lots,
-            "Open Price": p.open_price,
-            "Margin": round(p.margin_invested, 2),
-            "Fee": round(p.brokerage_fee, 2)
-        } for p in positions])
+        # Performance optimization: Summarize first
+        total_trades = len(positions)
+        
+        # Calculate PnL for all positions
+        with st.spinner("Calculating total PnL..."):
+            total_unrealized_pnl = 0.0
+            latest_prices = fetcher.fetch_current_prices()
+            
+            table_data = []
+            for p in positions:
+                current_price = latest_prices.get(p.symbol)
+                pnl = 0.0
+                if current_price:
+                    pnl = engine.calculate_pnl(p.position_type, p.lots, p.open_price, current_price)
+                    pnl -= p.brokerage_fee
+                
+                total_unrealized_pnl += pnl
+                table_data.append({
+                    "Agent": p.agent.name,
+                    "Symbol": p.symbol,
+                    "Type": p.position_type,
+                    "Lots": p.lots,
+                    "Open Price": p.open_price,
+                    "Current Price": f"{current_price:.5f}" if current_price else "N/A",
+                    "Net PnL ($)": round(pnl, 2)
+                })
+
+        # Display Metrics
+        m1, m2 = st.columns(2)
+        m1.metric("Total Open Trades", total_trades)
+        m2.metric("Total Unrealized PnL", f"${total_unrealized_pnl:,.2f}", delta=f"{total_unrealized_pnl:.2f}")
+        
+        st.divider()
+        if st.checkbox("Show Detailed Position List"):
+            st.table(table_data)
+            
+        if st.button("🔄 Refresh Data (Manual)"):
+            st.rerun()
     else:
-        st.write("No open positions.")
+        st.info("No open positions at the moment.")
+        if st.button("🔄 Refresh"):
+            st.rerun()
