@@ -33,28 +33,28 @@ class StreamlitCallback(BaseCallback):
 def generate_agent_name():
     return "Agent_" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
 
-def run_training_session(symbol, period, interval, num_agents, config, progress_bar, status_text, overall_status, existing_agent_names=None, use_csv=False, csv_path=None, sentiment_csv_path=None):
+def run_training_session(symbol, period, interval, num_agents, config, progress_bar, status_text, overall_status, existing_agent_names=None, use_csv=False, csv_paths=None, sentiment_csv_paths=None):
     engine = FinancialEngine('config.yaml')
     fetcher = MarketDataFetcher(config)
     session = init_db()
     
-    if use_csv and csv_path:
-        overall_status.info(f"Loading historical data from CSV: {csv_path}...")
-        df = fetcher.fetch_from_csv(csv_path)
-        symbol_label = os.path.basename(csv_path)
+    if use_csv and csv_paths:
+        overall_status.info(f"Loading data from {len(csv_paths)} CSV file(s)...")
+        df = fetcher.fetch_from_multiple_csvs(csv_paths)
+        symbol_label = "+".join([os.path.basename(p) for p in csv_paths])
     else:
         overall_status.info(f"Fetching historical data for {symbol} ({period} / {interval})...")
         df = fetcher.fetch_historical_data(symbol, period=period, interval=interval)
         symbol_label = symbol
     
     if df.empty:
-        overall_status.error(f"Failed to fetch data for {symbol_label}. Training aborted.")
+        overall_status.error(f"Failed to fetch data. Training aborted.")
         return False, []
 
     # Optional Sentiment Integration
-    if sentiment_csv_path:
-        overall_status.info(f"Integrating sentiment data from {sentiment_csv_path}...")
-        sentiment_df = fetcher.load_sentiment_from_csv(sentiment_csv_path)
+    if sentiment_csv_paths:
+        overall_status.info(f"Integrating sentiment data from {len(sentiment_csv_paths)} file(s)...")
+        sentiment_df = fetcher.load_sentiment_from_multiple_csvs(sentiment_csv_paths)
         df = fetcher.attach_sentiment_to_df(df, sentiment_df)
         overall_status.success("Sentiment integrated into market data.")
 
@@ -142,7 +142,7 @@ def run_training_session(symbol, period, interval, num_agents, config, progress_
         
     return True, results
 
-def run_deep_evolutionary_training(symbol, period, interval, num_agents, config, progress_bar, status_text, overall_status, use_csv=False, csv_path=None, sentiment_csv_path=None, target_epochs=20):
+def run_deep_evolutionary_training(symbol, period, interval, num_agents, config, progress_bar, status_text, overall_status, use_csv=False, csv_paths=None, sentiment_csv_paths=None, target_epochs=20):
     """
     Automated training pipeline:
     1. Trains multiple agents.
@@ -153,10 +153,10 @@ def run_deep_evolutionary_training(symbol, period, interval, num_agents, config,
     fetcher = MarketDataFetcher(config)
     session = init_db()
     
-    if use_csv and csv_path:
-        overall_status.info(f"Loading data from CSV: {csv_path}...")
-        df = fetcher.fetch_from_csv(csv_path)
-        symbol_label = os.path.basename(csv_path)
+    if use_csv and csv_paths:
+        overall_status.info(f"Loading data from {len(csv_paths)} CSV file(s)...")
+        df = fetcher.fetch_from_multiple_csvs(csv_paths)
+        symbol_label = "+".join([os.path.basename(p) for p in csv_paths])
     else:
         overall_status.info(f"Fetching data for {symbol}...")
         df = fetcher.fetch_historical_data(symbol, period=period, interval=interval)
@@ -166,8 +166,9 @@ def run_deep_evolutionary_training(symbol, period, interval, num_agents, config,
         overall_status.error("Failed to load data.")
         return False, []
 
-    if sentiment_csv_path:
-        sentiment_df = fetcher.load_sentiment_from_csv(sentiment_csv_path)
+    if sentiment_csv_paths:
+        overall_status.info(f"Integrating sentiment from {len(sentiment_csv_paths)} file(s)...")
+        sentiment_df = fetcher.load_sentiment_from_multiple_csvs(sentiment_csv_paths)
         df = fetcher.attach_sentiment_to_df(df, sentiment_df)
 
     data_length = len(df)

@@ -144,6 +144,43 @@ class MarketDataFetcher:
             print(f"Error reading CSV {file_path}: {e}")
             return pd.DataFrame()
 
+    def fetch_from_multiple_csvs(self, file_paths: list[str]) -> pd.DataFrame:
+        """
+        Reads multiple CSV files and concatenates them.
+        """
+        all_dfs = []
+        for path in file_paths:
+            df = self.fetch_from_csv(path)
+            if not df.empty:
+                all_dfs.append(df)
+        
+        if not all_dfs:
+            return pd.DataFrame()
+            
+        combined = pd.concat(all_dfs)
+        # Sort by index (Datetime) and remove duplicates if any
+        combined = combined.sort_index()
+        combined = combined[~combined.index.duplicated(keep='first')]
+        return combined
+
+    def load_sentiment_from_multiple_csvs(self, file_paths: list[str]) -> pd.DataFrame:
+        """
+        Reads multiple sentiment CSVs and concatenates them.
+        """
+        all_dfs = []
+        for path in file_paths:
+            df = self.load_sentiment_from_csv(path)
+            if not df.empty:
+                all_dfs.append(df)
+        
+        if not all_dfs:
+            return pd.DataFrame()
+            
+        combined = pd.concat(all_dfs)
+        combined = combined.sort_index()
+        combined = combined[~combined.index.duplicated(keep='first')]
+        return combined
+
     def load_sentiment_from_csv(self, file_path: str) -> pd.DataFrame:
         """
         Expects a CSV with columns like: Datetime, Score (or Sentiment)

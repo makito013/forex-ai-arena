@@ -55,8 +55,8 @@ with tab_train:
     selected_period = "max"
     selected_interval = "15m"
     use_csv = False
-    csv_path = None
-    sentiment_csv_path = None
+    csv_paths = []
+    sentiment_csv_paths = []
     
     col_sym, col_per, col_ag = st.columns(3)
     
@@ -82,8 +82,8 @@ with tab_train:
                 os.makedirs(csv_folder)
             csv_files = [f for f in os.listdir(csv_folder) if f.endswith('.csv')]
             if csv_files:
-                selected_csv = st.selectbox("Select Price CSV", csv_files)
-                csv_path = os.path.join(csv_folder, selected_csv)
+                selected_csvs = st.multiselect("Select Price CSV(s)", csv_files, default=[csv_files[0]] if csv_files else [])
+                csv_paths = [os.path.join(csv_folder, f) for f in selected_csvs]
             else:
                 st.warning("No CSV files found in 'data/historical'.")
         with col_per:
@@ -100,14 +100,13 @@ with tab_train:
 
     # Optional Sentiment Data
     with st.expander("Optional: Include News Sentiment"):
-        st.write("If you have a CSV with 'Datetime' and 'Sentiment' (score -1 to 1), select it here.")
+        st.write("Select one or more CSVs with 'Datetime' and 'Sentiment' (score -1 to 1).")
         news_folder = "data/news"
         if not os.path.exists(news_folder): os.makedirs(news_folder)
         news_files = [f for f in os.listdir(news_folder) if f.endswith('.csv')]
         if news_files:
-            selected_news = st.selectbox("Select Sentiment CSV", ["None"] + news_files)
-            if selected_news != "None":
-                sentiment_csv_path = os.path.join(news_folder, selected_news)
+            selected_news = st.multiselect("Select Sentiment CSV(s)", news_files)
+            sentiment_csv_paths = [os.path.join(news_folder, f) for f in selected_news]
         else:
             st.info("No news CSV files found in 'data/news'.")
             
@@ -135,7 +134,7 @@ with tab_train:
     if st.button("🚀 Start Training Session"):
         if mode == "Retrain Existing Agent(s)" and not existing_agent_names:
             st.error("Please select at least one agent to retrain.")
-        elif use_csv and not csv_path:
+        elif use_csv and not csv_paths:
             st.error("Please place a CSV file in 'data/historical' and select it.")
         else:
             st.divider()
@@ -155,8 +154,8 @@ with tab_train:
                     status_text=status_text,
                     overall_status=overall_status,
                     use_csv=use_csv,
-                    csv_path=csv_path,
-                    sentiment_csv_path=sentiment_csv_path,
+                    csv_paths=csv_paths,
+                    sentiment_csv_paths=sentiment_csv_paths,
                     target_epochs=target_epochs
                 )
             else:
@@ -171,8 +170,8 @@ with tab_train:
                     overall_status=overall_status,
                     existing_agent_names=existing_agent_names,
                     use_csv=use_csv,
-                    csv_path=csv_path,
-                    sentiment_csv_path=sentiment_csv_path
+                    csv_paths=csv_paths,
+                    sentiment_csv_paths=sentiment_csv_paths
                 )
             
             if success:
@@ -228,8 +227,8 @@ with tab_comp:
                 csv_folder = "data/historical"
                 csv_files = [f for f in os.listdir(csv_folder) if f.endswith('.csv')] if os.path.exists(csv_folder) else []
                 if csv_files:
-                    c_selected_csv = st.selectbox("Select CSV File", csv_files, key="comp_csv_sel")
-                    c_csv_path = os.path.join(csv_folder, c_selected_csv)
+                    c_selected_csvs = st.multiselect("Select Competition CSV(s)", csv_files, key="comp_csv_sel")
+                    c_csv_paths = [os.path.join(csv_folder, f) for f in c_selected_csvs]
                 else:
                     st.warning("No CSV files found in 'data/historical'.")
             with col_c_per:
@@ -244,22 +243,21 @@ with tab_comp:
                 c_csv_int_label = st.selectbox("CSV Timeframe", list(c_csv_interval_options.keys()), key="comp_csv_tf")
                 c_interval = c_csv_interval_options[c_csv_int_label]
             
-        c_sentiment_csv_path = None
+        c_sentiment_csv_paths = []
         with st.expander("Optional: Competition News Sentiment"):
             news_folder = "data/news"
             news_files = [f for f in os.listdir(news_folder) if f.endswith('.csv')] if os.path.exists(news_folder) else []
             if news_files:
-                c_selected_news = st.selectbox("Select Competition Sentiment CSV", ["None"] + news_files)
-                if c_selected_news != "None":
-                    c_sentiment_csv_path = os.path.join(news_folder, c_selected_news)
+                c_selected_news = st.multiselect("Select Competition Sentiment CSV(s)", news_files)
+                c_sentiment_csv_paths = [os.path.join(news_folder, f) for f in c_selected_news]
             else:
                 st.info("No news CSV files found in 'data/news'.")
 
         if st.button("🏆 Start Competition"):
             if not selected_competitors:
                 st.error("Select at least one competitor.")
-            elif c_use_csv and not c_csv_path:
-                st.error("Please place a CSV file in 'data/historical' and select it.")
+            elif c_use_csv and not c_csv_paths:
+                st.error("Please select at least one CSV file.")
             else:
                 st.divider()
                 status_text = st.empty()
@@ -274,8 +272,8 @@ with tab_comp:
                     progress_bar=progress_bar,
                     status_text=status_text,
                     use_csv=c_use_csv,
-                    csv_path=c_csv_path,
-                    sentiment_csv_path=c_sentiment_csv_path
+                    csv_paths=c_csv_paths,
+                    sentiment_csv_paths=c_sentiment_csv_paths
                 )
                 
                 if success:

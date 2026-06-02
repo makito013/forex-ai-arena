@@ -17,14 +17,14 @@ def get_steps_per_day(interval):
     }
     return mapping.get(interval, 96)
 
-def run_competition(agent_names, symbol, period, interval, config, progress_bar, status_text, use_csv=False, csv_path=None, sentiment_csv_path=None):
+def run_competition(agent_names, symbol, period, interval, config, progress_bar, status_text, use_csv=False, csv_paths=None, sentiment_csv_paths=None):
     engine = FinancialEngine('config.yaml')
     fetcher = MarketDataFetcher(config)
     session = init_db()
     
-    if use_csv and csv_path:
-        status_text.text(f"Loading competition data from CSV: {csv_path}...")
-        df = fetcher.fetch_from_csv(csv_path)
+    if use_csv and csv_paths:
+        status_text.text(f"Loading competition data from {len(csv_paths)} CSV file(s)...")
+        df = fetcher.fetch_from_multiple_csvs(csv_paths)
     else:
         status_text.text(f"Fetching competition data for {symbol}...")
         df = fetcher.fetch_historical_data(symbol, period=period, interval=interval)
@@ -33,9 +33,9 @@ def run_competition(agent_names, symbol, period, interval, config, progress_bar,
         status_text.text("Failed to load competition data.")
         return False, []
 
-    if sentiment_csv_path:
-        status_text.text(f"Integrating news sentiment from {sentiment_csv_path}...")
-        sentiment_df = fetcher.load_sentiment_from_csv(sentiment_csv_path)
+    if sentiment_csv_paths:
+        status_text.text(f"Integrating news sentiment from {len(sentiment_csv_paths)} file(s)...")
+        sentiment_df = fetcher.load_sentiment_from_multiple_csvs(sentiment_csv_paths)
         df = fetcher.attach_sentiment_to_df(df, sentiment_df)
 
     steps_per_day = get_steps_per_day(interval)
