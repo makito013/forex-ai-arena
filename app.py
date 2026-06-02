@@ -40,6 +40,13 @@ st.sidebar.header("Configuration")
 st.sidebar.write(f"Leverage: 1:{engine.leverage}")
 st.sidebar.write(f"Brokerage Fee: {engine.fee_pct * 100}% on margin")
 
+# Session State Initialization for Goal-Oriented Mode
+if "goal_training_active" not in st.session_state:
+    st.session_state.goal_training_active = False
+    st.session_state.goal_paused = False
+    st.session_state.goal_epoch = 1
+    st.session_state.goal_best_pnl = -99999.0
+
 # Setup Tabs
 tab_setup, tab_board, tab_comp, tab_train, tab_data, tab_pos = st.tabs([
     "Arena Setup (Math Test)", "Leaderboard", "Competition Arena ⚔️", "Training Arena 🧠", "Market Data", "Open Positions"
@@ -47,150 +54,249 @@ tab_setup, tab_board, tab_comp, tab_train, tab_data, tab_pos = st.tabs([
 
 with tab_train:
     st.header("🧠 Train New AI Agents")
-    st.write("Configure and launch a training session directly from the UI. The agents will play against historical data for the chosen period and asset.")
     
-    t_data_source = st.radio("Data Source", ["Yahoo Finance (Online)", "Local CSV (Offline)"], key="train_ds")
-    
-    selected_symbol = "CSV"
-    selected_period = "max"
-    selected_interval = "15m"
-    use_csv = False
-    csv_paths = []
-    sentiment_csv_paths = []
-    
-    col_sym, col_per, col_ag = st.columns(3)
-    
-    if t_data_source == "Yahoo Finance (Online)":
-        with col_sym:
-            pairs = [p['symbol'] for p in engine.config['assets']['pairs']]
-            selected_symbol = st.selectbox("Currency Pair / Asset", pairs)
-        with col_per:
-            period_options = {
-                "5 Days (1m chart)": ("5d", "1m"),
-                "1 Month (15m chart)": ("1mo", "15m"),
-                "3 Months (1h chart)": ("3mo", "1h"),
-                "1 Year (1d chart)": ("1y", "1d"),
-                "Max Available (1d chart)": ("max", "1d")
-            }
-            selected_period_label = st.selectbox("Historical Data Period", list(period_options.keys()))
-            selected_period, selected_interval = period_options[selected_period_label]
-    else:
-        use_csv = True
-        with col_sym:
-            csv_folder = "data/historical"
-            if not os.path.exists(csv_folder):
-                os.makedirs(csv_folder)
-            csv_files = [f for f in os.listdir(csv_folder) if f.endswith('.csv')]
-            if csv_files:
-                selected_csvs = st.multiselect("Select Price CSV(s)", csv_files, default=[csv_files[0]] if csv_files else [])
-                csv_paths = [os.path.join(csv_folder, f) for f in selected_csvs]
-            else:
-                st.warning("No CSV files found in 'data/historical'.")
-        with col_per:
-            csv_interval_options = {
-                "1 Minute (1m)": "1m",
-                "5 Minutes (5m)": "5m",
-                "15 Minutes (15m)": "15m",
-                "30 Minutes (30m)": "30m",
-                "1 Hour (1h)": "1h",
-                "1 Day (1d)": "1d"
-            }
-            csv_int_label = st.selectbox("CSV Timeframe", list(csv_interval_options.keys()))
-            selected_interval = csv_interval_options[csv_int_label]
+    if st.session_state.goal_training_active:
+        st.warning("🎯 **Goal-Oriented Training is currently running in the background.**")
+        
+        # Display Controls
+        col_p, col_s = st.columns(2)
+        if col_p.button("⏸️ Pause / Resume"):
+            st.session_state.goal_paused = not st.session_state.goal_paused
+            st.rerun()
+            
+        if col_s.button("🛑 Stop & Reset"):
+            st.session_state.goal_training_active = False
+            st.session_state.goal_paused = False
+            st.rerun()
+            
+        st.metric("Target Net Profit ($)", f"${st.session_state.target_profit_goal:,.2f}")
+        
+        m_col1, m_col2 = st.columns(2)
+        m_col1.metric("Current Epoch", st.session_state.goal_epoch)
+        m_col2.metric("Best Agent PnL So Far", f"${st.session_state.goal_best_pnl:,.2f}")
+        
+        if not st.session_state.goal_paused:
+            with st.spinner(f"🚀 Epoch {st.session_state.goal_epoch} running concurrently for {len(st.session_state.goal_agents)} agents. Please wait..."):
+                from src.engine.trainer import run_concurrent_epoch
+                results = run_concurrent_epoch(
+                    st.session_state.goal_agents, 
+                    st.session_state.goal_df, 
+                    engine.config, 
+                    st.session_state.goal_steps_per_day
+                )
+                
+                st.session_state.goal_epoch += 1
+                
+                # Check Results
+                best_pnl_this_epoch = -99999
+                winners = []
+                for name, bal, score in results:
+                    pnl = bal - engine.config['arena']['initial_balance']
+                    if pnl > best_pnl_this_epoch:
+                        best_pnl_this_epoch = pnl
+                    if pnl >= st.session_state.target_profit_goal:
+                        winners.append((name, bal, score))
+                        
+                if best_pnl_this_epoch > st.session_state.goal_best_pnl:
+                    st.session_state.goal_best_pnl = best_pnl_this_epoch
+                
+                if winners:
+                    st.success(f"🎉 Target Reached! {len(winners)} agents hit the goal of ${st.session_state.target_profit_goal}.")
+                    # Save Winners to DB
+                    for w_name, w_bal, w_score in winners:
+                        new_agent = Agent(name=w_name, strategy_type=f"GOAL_{st.session_state.goal_symbol}", balance=w_bal, score=w_score)
+                        session.add(new_agent)
+                    session.commit()
+                    st.session_state.goal_training_active = False
+                    st.info("Check the Leaderboard to see your new profitable agents!")
+                else:
+                    # Loop again
+                    st.rerun()
+        else:
+            st.info("⏸️ Training Paused. Click 'Pause / Resume' to continue.")
 
-    # Optional Sentiment Data
-    with st.expander("Optional: Include News Sentiment"):
-        st.write("Select one or more CSVs with 'Datetime' and 'Sentiment' (score -1 to 1).")
-        news_folder = "data/news"
-        if not os.path.exists(news_folder): os.makedirs(news_folder)
-        news_files = [f for f in os.listdir(news_folder) if f.endswith('.csv')]
-        if news_files:
-            selected_news = st.multiselect("Select Sentiment CSV(s)", news_files)
-            sentiment_csv_paths = [os.path.join(news_folder, f) for f in selected_news]
+    else:
+        st.write("Configure and launch a training session directly from the UI. The agents will play against historical data for the chosen period and asset.")
+        
+        t_data_source = st.radio("Data Source", ["Yahoo Finance (Online)", "Local CSV (Offline)"], key="train_ds")
+        
+        selected_symbol = "CSV"
+        selected_period = "max"
+        selected_interval = "15m"
+        use_csv = False
+        csv_paths = []
+        sentiment_csv_paths = []
+        
+        col_sym, col_per, col_ag = st.columns(3)
+        
+        if t_data_source == "Yahoo Finance (Online)":
+            with col_sym:
+                pairs = [p['symbol'] for p in engine.config['assets']['pairs']]
+                selected_symbol = st.selectbox("Currency Pair / Asset", pairs)
+            with col_per:
+                period_options = {
+                    "5 Days (1m chart)": ("5d", "1m"),
+                    "1 Month (15m chart)": ("1mo", "15m"),
+                    "3 Months (1h chart)": ("3mo", "1h"),
+                    "1 Year (1d chart)": ("1y", "1d"),
+                    "Max Available (1d chart)": ("max", "1d")
+                }
+                selected_period_label = st.selectbox("Historical Data Period", list(period_options.keys()))
+                selected_period, selected_interval = period_options[selected_period_label]
         else:
-            st.info("No news CSV files found in 'data/news'.")
-            
-    with col_ag:
-        mode = st.radio("Training Mode", ["Create New Agent(s)", "Retrain Existing Agent(s)", "Deep Evolutionary Training 🧬"])
-        
-        existing_agent_names = None
-        num_agents = 1
-        target_epochs = 10
-        
-        if mode == "Retrain Existing Agent(s)":
-            existing_agents = session.query(Agent).all()
-            if existing_agents:
-                agent_names = [a.name for a in existing_agents]
-                existing_agent_names = st.multiselect("Select Agent(s) to Retrain", agent_names, default=None)
+            use_csv = True
+            with col_sym:
+                csv_folder = "data/historical"
+                if not os.path.exists(csv_folder):
+                    os.makedirs(csv_folder)
+                csv_files = [f for f in os.listdir(csv_folder) if f.endswith('.csv')]
+                if csv_files:
+                    selected_csvs = st.multiselect("Select Price CSV(s)", csv_files, default=[csv_files[0]] if csv_files else [])
+                    csv_paths = [os.path.join(csv_folder, f) for f in selected_csvs]
+                else:
+                    st.warning("No CSV files found in 'data/historical'.")
+            with col_per:
+                csv_interval_options = {
+                    "1 Minute (1m)": "1m",
+                    "5 Minutes (5m)": "5m",
+                    "15 Minutes (15m)": "15m",
+                    "30 Minutes (30m)": "30m",
+                    "1 Hour (1h)": "1h",
+                    "1 Day (1d)": "1d"
+                }
+                csv_int_label = st.selectbox("CSV Timeframe", list(csv_interval_options.keys()))
+                selected_interval = csv_interval_options[csv_int_label]
+
+        # Optional Sentiment Data
+        with st.expander("Optional: Include News Sentiment"):
+            st.write("Select one or more CSVs with 'Datetime' and 'Sentiment' (score -1 to 1).")
+            news_folder = "data/news"
+            if not os.path.exists(news_folder): os.makedirs(news_folder)
+            news_files = [f for f in os.listdir(news_folder) if f.endswith('.csv')]
+            if news_files:
+                selected_news = st.multiselect("Select Sentiment CSV(s)", news_files)
+                sentiment_csv_paths = [os.path.join(news_folder, f) for f in selected_news]
             else:
-                st.warning("No existing agents found in database.")
-        elif mode == "Deep Evolutionary Training 🧬":
-            st.info("Survival of the fittest: Many agents will be trained, but only those that end with profit will be saved.")
-            num_agents = st.number_input("Population Size (Candidates)", min_value=1, max_value=50, value=5)
-            target_epochs = st.slider("Target Epochs (Passes over data)", min_value=1, max_value=100, value=20)
-        else:
-            num_agents = st.number_input("Number of New Agents to Train", min_value=1, max_value=10, value=1)
-        
-    if st.button("🚀 Start Training Session"):
-        if mode == "Retrain Existing Agent(s)" and not existing_agent_names:
-            st.error("Please select at least one agent to retrain.")
-        elif use_csv and not csv_paths:
-            st.error("Please place a CSV file in 'data/historical' and select it.")
-        else:
-            st.divider()
-            overall_status = st.empty()
-            progress_bar = st.progress(0.0)
-            status_text = st.empty()
+                st.info("No news CSV files found in 'data/news'.")
+                
+        with col_ag:
+            mode = st.radio("Training Mode", ["Create New Agent(s)", "Retrain Existing Agent(s)", "Deep Evolutionary Training 🧬", "Goal-Oriented Concurrent 🎯"])
             
-            # Live Monitor Container
-            st.write("---")
-            st.subheader("📊 Live Training Monitor")
-            mon_col1, mon_col2 = st.columns(2)
-            trade_metric = mon_col1.empty()
-            pnl_metric = mon_col2.empty()
+            existing_agent_names = None
+            num_agents = 1
+            target_epochs = 10
+            target_profit_goal = 5000.0
             
-            if mode == "Deep Evolutionary Training 🧬":
-                from src.engine.trainer import run_deep_evolutionary_training
-                success, results = run_deep_evolutionary_training(
-                    symbol=selected_symbol,
-                    period=selected_period,
-                    interval=selected_interval,
-                    num_agents=num_agents,
-                    config=engine.config,
-                    progress_bar=progress_bar,
-                    status_text=status_text,
-                    overall_status=overall_status,
-                    trade_metric=trade_metric,
-                    pnl_metric=pnl_metric,
-                    use_csv=use_csv,
-                    csv_paths=csv_paths,
-                    sentiment_csv_paths=sentiment_csv_paths,
-                    target_epochs=target_epochs
-                )
+            if mode == "Retrain Existing Agent(s)":
+                existing_agents = session.query(Agent).all()
+                if existing_agents:
+                    agent_names = [a.name for a in existing_agents]
+                    existing_agent_names = st.multiselect("Select Agent(s) to Retrain", agent_names, default=None)
+                else:
+                    st.warning("No existing agents found in database.")
+            elif mode == "Deep Evolutionary Training 🧬":
+                st.info("Survival of the fittest: Many agents will be trained sequentially. Only those that profit are saved.")
+                num_agents = st.number_input("Population Size", min_value=1, max_value=50, value=5)
+                target_epochs = st.slider("Target Epochs (Passes over data)", min_value=1, max_value=100, value=20)
+            elif mode == "Goal-Oriented Concurrent 🎯":
+                st.info("Train multiple agents concurrently until one hits the target profit.")
+                num_agents = st.number_input("Concurrent Agents", min_value=1, max_value=20, value=5)
+                target_profit_goal = st.number_input("Target Net Profit ($)", min_value=100.0, value=5000.0, step=500.0)
             else:
-                success, results = run_training_session(
-                    symbol=selected_symbol,
-                    period=selected_period,
-                    interval=selected_interval,
-                    num_agents=num_agents,
-                    config=engine.config,
-                    progress_bar=progress_bar,
-                    status_text=status_text,
-                    overall_status=overall_status,
-                    trade_metric=trade_metric,
-                    pnl_metric=pnl_metric,
-                    existing_agent_names=existing_agent_names,
-                    use_csv=use_csv,
-                    csv_paths=csv_paths,
-                    sentiment_csv_paths=sentiment_csv_paths
-                )
+                num_agents = st.number_input("Number of New Agents to Train", min_value=1, max_value=10, value=1)
             
-            if success:
-                progress_bar.progress(1.0)
-                status_text.text("Training Phase Completed.")
-                overall_status.success(f"🎉 Successfully trained!")
-                st.table(results)
-                st.info("Go to the Leaderboard tab to see how they rank globally!")
+        if st.button("🚀 Start Training Session"):
+            if mode == "Retrain Existing Agent(s)" and not existing_agent_names:
+                st.error("Please select at least one agent to retrain.")
+            elif use_csv and not csv_paths:
+                st.error("Please place a CSV file in 'data/historical' and select it.")
+            else:
+                st.divider()
+                
+                if mode == "Goal-Oriented Concurrent 🎯":
+                    # Initialize Goal Training State
+                    with st.spinner("Preparing concurrent agents and loading data..."):
+                        if use_csv:
+                            df = fetcher.fetch_from_multiple_csvs(csv_paths)
+                            symbol_label = "+".join([os.path.basename(p) for p in csv_paths])
+                        else:
+                            df = fetcher.fetch_historical_data(selected_symbol, period=selected_period, interval=selected_interval)
+                            symbol_label = selected_symbol
+                            
+                        if sentiment_csv_paths:
+                            sentiment_df = fetcher.load_sentiment_from_multiple_csvs(sentiment_csv_paths)
+                            df = fetcher.attach_sentiment_to_df(df, sentiment_df)
+                            
+                        if not df.empty:
+                            from src.engine.trainer import generate_agent_name
+                            st.session_state.goal_agents = [generate_agent_name() for _ in range(num_agents)]
+                            st.session_state.goal_df = df
+                            st.session_state.goal_symbol = symbol_label
+                            mapping = {"1m": 1440, "5m": 288, "15m": 96, "30m": 48, "1h": 24, "1d": 1}
+                            st.session_state.goal_steps_per_day = mapping.get(selected_interval, 96)
+                            st.session_state.target_profit_goal = target_profit_goal
+                            
+                            # Start Loop
+                            st.session_state.goal_training_active = True
+                            st.session_state.goal_epoch = 1
+                            st.session_state.goal_best_pnl = -99999.0
+                            st.rerun()
+                        else:
+                            st.error("Failed to load data.")
+                else:
+                    # Standard Training Flow
+                    overall_status = st.empty()
+                    progress_bar = st.progress(0.0)
+                    status_text = st.empty()
+                    
+                    st.write("---")
+                    st.subheader("📊 Live Training Monitor")
+                    mon_col1, mon_col2 = st.columns(2)
+                    trade_metric = mon_col1.empty()
+                    pnl_metric = mon_col2.empty()
+                    
+                    if mode == "Deep Evolutionary Training 🧬":
+                        from src.engine.trainer import run_deep_evolutionary_training
+                        success, results = run_deep_evolutionary_training(
+                            symbol=selected_symbol,
+                            period=selected_period,
+                            interval=selected_interval,
+                            num_agents=num_agents,
+                            config=engine.config,
+                            progress_bar=progress_bar,
+                            status_text=status_text,
+                            overall_status=overall_status,
+                            trade_metric=trade_metric,
+                            pnl_metric=pnl_metric,
+                            use_csv=use_csv,
+                            csv_paths=csv_paths,
+                            sentiment_csv_paths=sentiment_csv_paths,
+                            target_epochs=target_epochs
+                        )
+                    else:
+                        success, results = run_training_session(
+                            symbol=selected_symbol,
+                            period=selected_period,
+                            interval=selected_interval,
+                            num_agents=num_agents,
+                            config=engine.config,
+                            progress_bar=progress_bar,
+                            status_text=status_text,
+                            overall_status=overall_status,
+                            trade_metric=trade_metric,
+                            pnl_metric=pnl_metric,
+                            existing_agent_names=existing_agent_names,
+                            use_csv=use_csv,
+                            csv_paths=csv_paths,
+                            sentiment_csv_paths=sentiment_csv_paths
+                        )
+                    
+                    if success:
+                        progress_bar.progress(1.0)
+                        status_text.text("Training Phase Completed.")
+                        overall_status.success(f"🎉 Successfully trained!")
+                        st.table(results)
+                        st.info("Go to the Leaderboard tab to see how they rank globally!")
 
 with tab_comp:
     st.header("⚔️ Competition Arena")

@@ -3,6 +3,7 @@ import string
 import random
 import numpy as np
 import pandas as pd
+import concurrent.futures
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
@@ -10,6 +11,64 @@ from src.data.fetcher import MarketDataFetcher
 from src.engine.financial import FinancialEngine
 from src.engine.env import ForexEnv
 from src.db_models import init_db, Agent
+
+# --- Concurrent Worker Function ---
+def train_single_agent_chunk(args):
+    """
+    Worker function for training a single agent in a separate process.
+    """
+    agent_name, df, config, steps_per_day, timesteps = args
+    from stable_baselines3 import PPO
+    from src.engine.financial import FinancialEngine
+    from src.engine.env import ForexEnv
+    import os
+    
+    # Re-initialize engine locally for the process
+    engine = FinancialEngine('config.yaml')
+    engine.config = config 
+    
+    env = ForexEnv(df=df, engine=engine, initial_balance=config['arena']['initial_balance'], steps_per_day=steps_per_day)
+    
+    model_path = f"models/{agent_name}.zip"
+    if os.path.exists(model_path):
+        try:
+            model = PPO.load(model_path, env=env)
+        except:
+            model = PPO("MlpPolicy", env, verbose=0)
+    else:
+        model = PPO("MlpPolicy", env, verbose=0)
+        
+    # Learn for exactly 1 epoch (length of the dataframe)
+    model.learn(total_timesteps=timesteps)
+    
+    os.makedirs('models', exist_ok=True)
+    model.save(f"models/{agent_name}")
+    
+    return agent_name, env.balance, env.score
+
+def run_concurrent_epoch(agent_names, df, config, steps_per_day):
+    """
+    Orchestrates the training of multiple agents concurrently for 1 epoch.
+    """
+    timesteps = len(df)
+    results = []
+    
+    # Determine optimal worker count
+    max_workers = min(len(agent_names), os.cpu_count() or 4)
+    
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = []
+        for name in agent_names:
+            args = (name, df, config, steps_per_day, timesteps)
+            futures.append(executor.submit(train_single_agent_chunk, args))
+            
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                results.append(future.result())
+            except Exception as e:
+                print(f"Concurrent Worker Error: {e}")
+                
+    return results
 
 class StreamlitCallback(BaseCallback):
     """
