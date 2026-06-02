@@ -145,7 +145,9 @@ with tab_train:
             # Live Monitor Container
             st.write("---")
             st.subheader("📊 Live Training Monitor")
-            stats_container = st.container()
+            mon_col1, mon_col2 = st.columns(2)
+            trade_metric = mon_col1.empty()
+            pnl_metric = mon_col2.empty()
             
             if mode == "Deep Evolutionary Training 🧬":
                 from src.engine.trainer import run_deep_evolutionary_training
@@ -158,7 +160,8 @@ with tab_train:
                     progress_bar=progress_bar,
                     status_text=status_text,
                     overall_status=overall_status,
-                    stats_container=stats_container,
+                    trade_metric=trade_metric,
+                    pnl_metric=pnl_metric,
                     use_csv=use_csv,
                     csv_paths=csv_paths,
                     sentiment_csv_paths=sentiment_csv_paths,
@@ -174,7 +177,8 @@ with tab_train:
                     progress_bar=progress_bar,
                     status_text=status_text,
                     overall_status=overall_status,
-                    stats_container=stats_container,
+                    trade_metric=trade_metric,
+                    pnl_metric=pnl_metric,
                     existing_agent_names=existing_agent_names,
                     use_csv=use_csv,
                     csv_paths=csv_paths,

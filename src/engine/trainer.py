@@ -15,41 +15,42 @@ class StreamlitCallback(BaseCallback):
     """
     Custom callback for reporting training progress and real-time stats to the Streamlit UI.
     """
-    def __init__(self, progress_bar, status_text, total_timesteps, agent_name, stats_container=None, verbose=0):
+    def __init__(self, progress_bar, status_text, total_timesteps, agent_name, trade_metric=None, pnl_metric=None, verbose=0):
         super(StreamlitCallback, self).__init__(verbose)
         self.progress_bar = progress_bar
         self.status_text = status_text
         self.total_timesteps = total_timesteps
         self.agent_name = agent_name
-        self.stats_container = stats_container
+        self.trade_metric = trade_metric
+        self.pnl_metric = pnl_metric
 
     def _on_step(self) -> bool:
-        progress = self.num_timesteps / self.total_timesteps
-        safe_progress = max(0.0, min(progress, 1.0))
-        self.progress_bar.progress(safe_progress)
-        
-        # Get data from the environment
-        # self.training_env is a VecEnv, we take the first (and only) env
-        env_info = self.training_env.get_attr('balance')[0]
-        initial_balance = self.training_env.get_attr('initial_balance')[0]
-        current_pnl = env_info - initial_balance
-        has_pos = self.training_env.get_attr('current_position')[0] is not None
-        
-        self.status_text.text(f"Training {self.agent_name} | Step: {self.num_timesteps}/{self.total_timesteps} | PnL: ${current_pnl:.2f}")
-        
-        # Update live stats if container provided
-        if self.stats_container:
-            with self.stats_container:
-                col1, col2 = st.columns(2)
-                col1.metric("Active Trade", "YES" if has_pos else "NO")
-                col2.metric("Current Agent PnL", f"${current_pnl:.2f}", delta=f"{current_pnl:.2f}")
-        
+        # Throttle UI updates to avoid freezing Streamlit (every 100 steps)
+        if self.num_timesteps % 100 == 0 or self.num_timesteps == self.total_timesteps:
+            progress = self.num_timesteps / self.total_timesteps
+            safe_progress = max(0.0, min(progress, 1.0))
+            self.progress_bar.progress(safe_progress)
+            
+            # Get data from the environment
+            env_info = self.training_env.get_attr('balance')[0]
+            initial_balance = self.training_env.get_attr('initial_balance')[0]
+            current_pnl = env_info - initial_balance
+            has_pos = self.training_env.get_attr('current_position')[0] is not None
+            
+            self.status_text.text(f"Training {self.agent_name} | Step: {self.num_timesteps}/{self.total_timesteps} | PnL: ${current_pnl:.2f}")
+            
+            # Update live stats in place using .empty() placeholders
+            if self.trade_metric and self.pnl_metric:
+                self.trade_metric.metric("Active Trade", "YES" if has_pos else "NO")
+                # Format color: red if negative, green if positive
+                self.pnl_metric.metric("Current Agent PnL", f"${current_pnl:.2f}", delta=f"{current_pnl:.2f}")
+            
         return True
 
 def generate_agent_name():
     return "Agent_" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
 
-def run_training_session(symbol, period, interval, num_agents, config, progress_bar, status_text, overall_status, stats_container=None, existing_agent_names=None, use_csv=False, csv_paths=None, sentiment_csv_paths=None):
+def run_training_session(symbol, period, interval, num_agents, config, progress_bar, status_text, overall_status, trade_metric=None, pnl_metric=None, existing_agent_names=None, use_csv=False, csv_paths=None, sentiment_csv_paths=None):
     engine = FinancialEngine('config.yaml')
     fetcher = MarketDataFetcher(config)
     session = init_db()
@@ -129,7 +130,7 @@ def run_training_session(symbol, period, interval, num_agents, config, progress_
             model = PPO("MlpPolicy", env, verbose=0)
         
         timesteps = min(50000, data_length * 3)
-        callback = StreamlitCallback(progress_bar, status_text, timesteps, agent_name, stats_container)
+        callback = StreamlitCallback(progress_bar, status_text, timesteps, agent_name, trade_metric, pnl_metric)
         model.learn(total_timesteps=timesteps, callback=callback)
         
         final_balance = env.balance
@@ -158,7 +159,7 @@ def run_training_session(symbol, period, interval, num_agents, config, progress_
         
     return True, results
 
-def run_deep_evolutionary_training(symbol, period, interval, num_agents, config, progress_bar, status_text, overall_status, stats_container=None, use_csv=False, csv_paths=None, sentiment_csv_paths=None, target_epochs=20):
+def run_deep_evolutionary_training(symbol, period, interval, num_agents, config, progress_bar, status_text, overall_status, trade_metric=None, pnl_metric=None, use_csv=False, csv_paths=None, sentiment_csv_paths=None, target_epochs=20):
     """
     Automated training pipeline:
     1. Trains multiple agents.
@@ -205,7 +206,7 @@ def run_deep_evolutionary_training(symbol, period, interval, num_agents, config,
         env = ForexEnv(df=df, engine=engine, initial_balance=config['arena']['initial_balance'], steps_per_day=steps_per_day)
         model = PPO("MlpPolicy", env, verbose=0)
         
-        callback = StreamlitCallback(progress_bar, status_text, timesteps_per_agent, agent_name, stats_container)
+        callback = StreamlitCallback(progress_bar, status_text, timesteps_per_agent, agent_name, trade_metric, pnl_metric)
         model.learn(total_timesteps=timesteps_per_agent, callback=callback)
         
         # Validation Check: Did it actually make profit?
