@@ -56,6 +56,7 @@ with tab_train:
     selected_interval = "15m"
     use_csv = False
     csv_path = None
+    sentiment_csv_path = None
     
     col_sym, col_per, col_ag = st.columns(3)
     
@@ -81,7 +82,7 @@ with tab_train:
                 os.makedirs(csv_folder)
             csv_files = [f for f in os.listdir(csv_folder) if f.endswith('.csv')]
             if csv_files:
-                selected_csv = st.selectbox("Select CSV File", csv_files)
+                selected_csv = st.selectbox("Select Price CSV", csv_files)
                 csv_path = os.path.join(csv_folder, selected_csv)
             else:
                 st.warning("No CSV files found in 'data/historical'.")
@@ -96,26 +97,39 @@ with tab_train:
             }
             csv_int_label = st.selectbox("CSV Timeframe", list(csv_interval_options.keys()))
             selected_interval = csv_interval_options[csv_int_label]
+
+    # Optional Sentiment Data
+    with st.expander("Optional: Include News Sentiment"):
+        st.write("If you have a CSV with 'Datetime' and 'Sentiment' (score -1 to 1), select it here.")
+        news_folder = "data/news"
+        if not os.path.exists(news_folder): os.makedirs(news_folder)
+        news_files = [f for f in os.listdir(news_folder) if f.endswith('.csv')]
+        if news_files:
+            selected_news = st.selectbox("Select Sentiment CSV", ["None"] + news_files)
+            if selected_news != "None":
+                sentiment_csv_path = os.path.join(news_folder, selected_news)
+        else:
+            st.info("No news CSV files found in 'data/news'.")
             
     with col_ag:
-        mode = st.radio("Training Mode", ["Create New Agent(s)", "Train Existing Agent"])
+        mode = st.radio("Training Mode", ["Create New Agent(s)", "Retrain Existing Agent(s)"])
         
-        existing_agent_name = None
+        existing_agent_names = None
         num_agents = 1
         
-        if mode == "Train Existing Agent":
+        if mode == "Retrain Existing Agent(s)":
             existing_agents = session.query(Agent).all()
             if existing_agents:
                 agent_names = [a.name for a in existing_agents]
-                existing_agent_name = st.selectbox("Select Agent", agent_names)
+                existing_agent_names = st.multiselect("Select Agent(s) to Retrain", agent_names, default=None)
             else:
                 st.warning("No existing agents found in database.")
         else:
-            num_agents = st.number_input("Number of Agents to Train", min_value=1, max_value=10, value=1)
+            num_agents = st.number_input("Number of New Agents to Train", min_value=1, max_value=10, value=1)
         
     if st.button("🚀 Start Training Session"):
-        if mode == "Train Existing Agent" and not existing_agent_name:
-            st.error("Please create an agent first or select 'Create New Agent(s)'.")
+        if mode == "Retrain Existing Agent(s)" and not existing_agent_names:
+            st.error("Please select at least one agent to retrain.")
         elif use_csv and not csv_path:
             st.error("Please place a CSV file in 'data/historical' and select it.")
         else:
@@ -133,9 +147,10 @@ with tab_train:
                 progress_bar=progress_bar,
                 status_text=status_text,
                 overall_status=overall_status,
-                existing_agent_name=existing_agent_name,
+                existing_agent_names=existing_agent_names,
                 use_csv=use_csv,
-                csv_path=csv_path
+                csv_path=csv_path,
+                sentiment_csv_path=sentiment_csv_path
             )
             
             if success:
@@ -147,16 +162,23 @@ with tab_train:
 
 with tab_comp:
     st.header("⚔️ Competition Arena")
-    st.write("Put trained agents against each other on a new dataset! They will NOT learn here, only trade. The score is calculated based on profit % (1pt per 1%) and a penalty for inactivity (-1pt per day without profit).")
+    st.write("Put trained agents against each other on a new dataset! They will NOT learn here, only trade.")
     
     existing_agents = session.query(Agent).all()
     if not existing_agents:
         st.warning("No agents available. Train some agents first!")
     else:
         agent_names = [a.name for a in existing_agents]
-        selected_competitors = st.multiselect("Select Competitors", agent_names, default=agent_names[:2] if len(agent_names) >= 2 else agent_names)
         
-        c_data_source = st.radio("Competition Data Source", ["Yahoo Finance (Online)", "Local CSV (Offline)"], key="comp_ds")
+        col_c_sel, col_c_ds = st.columns([1, 2])
+        with col_c_sel:
+            if st.checkbox("Select All Agents", value=True):
+                selected_competitors = st.multiselect("Select Competitors", agent_names, default=agent_names)
+            else:
+                selected_competitors = st.multiselect("Select Competitors", agent_names)
+        
+        with col_c_ds:
+            c_data_source = st.radio("Competition Data Source", ["Yahoo Finance (Online)", "Local CSV (Offline)"], key="comp_ds", horizontal=True)
         
         c_symbol = "CSV"
         c_period = "max"
@@ -173,7 +195,8 @@ with tab_comp:
             with col_c_per:
                 c_period_options = {
                     "Recent 5 Days (1m)": ("5d", "1m"),
-                    "Recent 1 Month (15m)": ("1mo", "15m")
+                    "Recent 1 Month (15m)": ("1mo", "15m"),
+                    "Recent 6 Months (1h)": ("6mo", "1h")
                 }
                 c_period_label = st.selectbox("Competition Dataset", list(c_period_options.keys()))
                 c_period, c_interval = c_period_options[c_period_label]
@@ -199,6 +222,17 @@ with tab_comp:
                 c_csv_int_label = st.selectbox("CSV Timeframe", list(c_csv_interval_options.keys()), key="comp_csv_tf")
                 c_interval = c_csv_interval_options[c_csv_int_label]
             
+        c_sentiment_csv_path = None
+        with st.expander("Optional: Competition News Sentiment"):
+            news_folder = "data/news"
+            news_files = [f for f in os.listdir(news_folder) if f.endswith('.csv')] if os.path.exists(news_folder) else []
+            if news_files:
+                c_selected_news = st.selectbox("Select Competition Sentiment CSV", ["None"] + news_files)
+                if c_selected_news != "None":
+                    c_sentiment_csv_path = os.path.join(news_folder, c_selected_news)
+            else:
+                st.info("No news CSV files found in 'data/news'.")
+
         if st.button("🏆 Start Competition"):
             if not selected_competitors:
                 st.error("Select at least one competitor.")
@@ -218,7 +252,8 @@ with tab_comp:
                     progress_bar=progress_bar,
                     status_text=status_text,
                     use_csv=c_use_csv,
-                    csv_path=c_csv_path
+                    csv_path=c_csv_path,
+                    sentiment_csv_path=c_sentiment_csv_path
                 )
                 
                 if success:
@@ -292,7 +327,29 @@ with tab_board:
     st.subheader("AI Leaderboard")
     agents = session.query(Agent).order_by(Agent.score.desc(), Agent.balance.desc()).all()
     if agents:
-        st.table([{ "ID": a.id, "Name": a.name, "Global Score 🏆": a.score, "Balance ($)": round(a.balance, 2), "Strategy": a.strategy_type } for a in agents])
+        agent_data = [{ "ID": a.id, "Name": a.name, "Global Score 🏆": a.score, "Balance ($)": round(a.balance, 2), "Strategy": a.strategy_type } for a in agents]
+        st.table(agent_data)
+        
+        st.divider()
+        st.subheader("Manage Agents")
+        col_del1, col_del2 = st.columns([2, 1])
+        with col_del1:
+            agent_to_delete = st.selectbox("Select Agent to Delete", [a.name for a in agents])
+        with col_del2:
+            if st.button("🗑️ Delete Agent", type="primary"):
+                agent_obj = session.query(Agent).filter_by(name=agent_to_delete).first()
+                if agent_obj:
+                    # Remove model file if it exists
+                    model_path = f"models/{agent_obj.name}.zip"
+                    if os.path.exists(model_path):
+                        os.remove(model_path)
+                    
+                    # Delete from DB
+                    session.delete(agent_obj)
+                    session.commit()
+                    st.success(f"Agent {agent_to_delete} deleted!")
+                    time.sleep(1)
+                    st.rerun()
     else:
         st.write("No agents in the arena yet.")
 

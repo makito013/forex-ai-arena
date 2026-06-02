@@ -17,7 +17,7 @@ def get_steps_per_day(interval):
     }
     return mapping.get(interval, 96)
 
-def run_competition(agent_names, symbol, period, interval, config, progress_bar, status_text, use_csv=False, csv_path=None):
+def run_competition(agent_names, symbol, period, interval, config, progress_bar, status_text, use_csv=False, csv_path=None, sentiment_csv_path=None):
     engine = FinancialEngine('config.yaml')
     fetcher = MarketDataFetcher(config)
     session = init_db()
@@ -32,6 +32,11 @@ def run_competition(agent_names, symbol, period, interval, config, progress_bar,
     if df.empty:
         status_text.text("Failed to load competition data.")
         return False, []
+
+    if sentiment_csv_path:
+        status_text.text(f"Integrating news sentiment from {sentiment_csv_path}...")
+        sentiment_df = fetcher.load_sentiment_from_csv(sentiment_csv_path)
+        df = fetcher.attach_sentiment_to_df(df, sentiment_df)
 
     steps_per_day = get_steps_per_day(interval)
     
@@ -53,7 +58,29 @@ def run_competition(agent_names, symbol, period, interval, config, progress_bar,
         env = ForexEnv(df=df, engine=engine, initial_balance=config['arena']['initial_balance'], steps_per_day=steps_per_day)
         
         try:
-            model = PPO.load(model_path, env=env)
+            # Check model's observation space before loading
+            # We can peek into the zip or try a safe load
+            model = PPO.load(model_path)
+            model_obs_shape = model.observation_space.shape[0]
+            
+            # If the model expects 7 variables (old version) but our current env provides 8 (new version),
+            # we must provide an environment that matches the model's expectations.
+            if model_obs_shape != env.observation_space.shape[0]:
+                # Temporary env with matching observation space
+                from gymnasium import spaces
+                import numpy as np
+                
+                # Patch the environment's observation space and _next_observation for this specific run
+                original_obs_func = env._next_observation
+                
+                if model_obs_shape == 7:
+                    env.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(7,), dtype=np.float32)
+                    def legacy_obs():
+                        full_obs = original_obs_func()
+                        return full_obs[:7] # Remove the sentiment variable
+                    env._next_observation = legacy_obs
+                
+            model.set_env(env)
         except Exception as e:
             print(f"Error loading {agent_name}: {e}")
             continue

@@ -31,7 +31,7 @@ class StreamlitCallback(BaseCallback):
 def generate_agent_name():
     return "Agent_" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
 
-def run_training_session(symbol, period, interval, num_agents, config, progress_bar, status_text, overall_status, existing_agent_name=None, use_csv=False, csv_path=None):
+def run_training_session(symbol, period, interval, num_agents, config, progress_bar, status_text, overall_status, existing_agent_names=None, use_csv=False, csv_path=None, sentiment_csv_path=None):
     engine = FinancialEngine('config.yaml')
     fetcher = MarketDataFetcher(config)
     session = init_db()
@@ -39,7 +39,6 @@ def run_training_session(symbol, period, interval, num_agents, config, progress_
     if use_csv and csv_path:
         overall_status.info(f"Loading historical data from CSV: {csv_path}...")
         df = fetcher.fetch_from_csv(csv_path)
-        # Try to infer symbol from filename if possible, otherwise use the dropdown symbol
         symbol_label = os.path.basename(csv_path)
     else:
         overall_status.info(f"Fetching historical data for {symbol} ({period} / {interval})...")
@@ -50,52 +49,55 @@ def run_training_session(symbol, period, interval, num_agents, config, progress_
         overall_status.error(f"Failed to fetch data for {symbol_label}. Training aborted.")
         return False, []
 
+    # Optional Sentiment Integration
+    if sentiment_csv_path:
+        overall_status.info(f"Integrating sentiment data from {sentiment_csv_path}...")
+        sentiment_df = fetcher.load_sentiment_from_csv(sentiment_csv_path)
+        df = fetcher.attach_sentiment_to_df(df, sentiment_df)
+        overall_status.success("Sentiment integrated into market data.")
+
     data_length = len(df)
     
-    if existing_agent_name:
-        num_agents = 1
-        overall_status.success(f"Data loaded! {data_length} candles. Continuing training for {existing_agent_name}.")
+    if existing_agent_names:
+        num_agents = len(existing_agent_names)
+        overall_status.success(f"Data loaded! {data_length} candles. Continuing training for {num_agents} existing agent(s).")
     else:
         overall_status.success(f"Data loaded! {data_length} candles available. Training {num_agents} new agent(s).")
     
     results = []
     
     for i in range(num_agents):
-        if existing_agent_name:
-            agent_name = existing_agent_name
+        if existing_agent_names:
+            agent_name = existing_agent_names[i]
             db_agent = session.query(Agent).filter_by(name=agent_name).first()
             initial_balance = db_agent.balance if db_agent else config['arena']['initial_balance']
         else:
             agent_name = generate_agent_name()
             initial_balance = config['arena']['initial_balance']
+            db_agent = None
             
         overall_status.info(f"Initializing Environment for Agent {i+1}/{num_agents}: {agent_name}...")
         
-        # Calculate steps per day based on interval
         mapping = {"1m": 1440, "5m": 288, "15m": 96, "30m": 48, "1h": 24, "1d": 1}
-        steps_per_day = mapping.get(interval, 96) # Default to 96 if CSV timeframe unknown
+        steps_per_day = mapping.get(interval, 96)
         
         env = ForexEnv(df=df, engine=engine, initial_balance=initial_balance, steps_per_day=steps_per_day)
         
         model_path = f"models/{agent_name}.zip"
-        if existing_agent_name and os.path.exists(model_path):
+        if os.path.exists(model_path):
             overall_status.info(f"Loading existing model weights for {agent_name}...")
             model = PPO.load(model_path, env=env)
         else:
             model = PPO("MlpPolicy", env, verbose=0)
         
-        # Train for approximately 3 epochs over the dataset
         timesteps = min(50000, data_length * 3)
-        
-        # Setup callback to link to Streamlit UI
         callback = StreamlitCallback(progress_bar, status_text, timesteps, agent_name)
-        
         model.learn(total_timesteps=timesteps, callback=callback)
         
         final_balance = env.balance
         strategy_label = f"PPO_{symbol_label}" if use_csv else f"PPO_{symbol}_{period}"
         
-        if existing_agent_name and db_agent:
+        if db_agent:
             db_agent.balance = final_balance
             if symbol_label not in db_agent.strategy_type:
                 db_agent.strategy_type += f" + {symbol_label}"

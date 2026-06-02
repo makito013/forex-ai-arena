@@ -48,6 +48,13 @@ class TradeHistory(Base):
 
     agent = relationship("Agent", back_populates="trade_history")
 
+class SentimentRecord(Base):
+    __tablename__ = 'sentiment_records'
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String, nullable=False) # e.g., 'EURUSD=X' or 'GLOBAL'
+    timestamp = Column(DateTime, nullable=False, index=True)
+    score = Column(Float, nullable=False) # -1.0 to 1.0
+
 def init_db(db_path='sqlite:///database.db'):
     engine = create_engine(db_path)
     Base.metadata.create_all(engine)
