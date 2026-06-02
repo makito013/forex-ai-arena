@@ -142,6 +142,11 @@ with tab_train:
             progress_bar = st.progress(0.0)
             status_text = st.empty()
             
+            # Live Monitor Container
+            st.write("---")
+            st.subheader("📊 Live Training Monitor")
+            stats_container = st.container()
+            
             if mode == "Deep Evolutionary Training 🧬":
                 from src.engine.trainer import run_deep_evolutionary_training
                 success, results = run_deep_evolutionary_training(
@@ -153,6 +158,7 @@ with tab_train:
                     progress_bar=progress_bar,
                     status_text=status_text,
                     overall_status=overall_status,
+                    stats_container=stats_container,
                     use_csv=use_csv,
                     csv_paths=csv_paths,
                     sentiment_csv_paths=sentiment_csv_paths,
@@ -168,6 +174,7 @@ with tab_train:
                     progress_bar=progress_bar,
                     status_text=status_text,
                     overall_status=overall_status,
+                    stats_container=stats_container,
                     existing_agent_names=existing_agent_names,
                     use_csv=use_csv,
                     csv_paths=csv_paths,
