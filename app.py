@@ -346,30 +346,45 @@ with tab_setup:
 with tab_board:
     st.subheader("AI Leaderboard")
     agents = session.query(Agent).order_by(Agent.score.desc(), Agent.balance.desc()).all()
+    
     if agents:
-        agent_data = [{ "ID": a.id, "Name": a.name, "Global Score 🏆": a.score, "Balance ($)": round(a.balance, 2), "Strategy": a.strategy_type } for a in agents]
-        st.table(agent_data)
-        
-        st.divider()
-        st.subheader("Manage Agents")
-        col_del1, col_del2 = st.columns([2, 1])
-        with col_del1:
-            agent_to_delete = st.selectbox("Select Agent to Delete", [a.name for a in agents])
-        with col_del2:
-            if st.button("🗑️ Delete Agent", type="primary"):
-                agent_obj = session.query(Agent).filter_by(name=agent_to_delete).first()
-                if agent_obj:
-                    # Remove model file if it exists
-                    model_path = f"models/{agent_obj.name}.zip"
-                    if os.path.exists(model_path):
-                        os.remove(model_path)
-                    
-                    # Delete from DB
-                    session.delete(agent_obj)
-                    session.commit()
-                    st.success(f"Agent {agent_to_delete} deleted!")
-                    time.sleep(1)
-                    st.rerun()
+        # Header with Bulk Action
+        col_hdr1, col_hdr2 = st.columns([4, 1])
+        with col_hdr2:
+            if st.button("🧨 DELETE ALL AGENTS", type="primary", use_container_width=True):
+                for a in agents:
+                    model_path = f"models/{a.name}.zip"
+                    if os.path.exists(model_path): os.remove(model_path)
+                    session.delete(a)
+                session.commit()
+                st.success("Wiped all agents!")
+                time.sleep(1)
+                st.rerun()
+
+        # Custom Table with Delete Buttons
+        st.write("---")
+        # st.table is static, let's use columns for a more interactive list
+        hdr_cols = st.columns([0.5, 2, 1, 1, 3, 0.5])
+        hdr_cols[0].write("**ID**")
+        hdr_cols[1].write("**Name**")
+        hdr_cols[2].write("**Score 🏆**")
+        hdr_cols[3].write("**Balance ($)**")
+        hdr_cols[4].write("**Strategy**")
+        hdr_cols[5].write("**Del**")
+
+        for a in agents:
+            row_cols = st.columns([0.5, 2, 1, 1, 3, 0.5])
+            row_cols[0].write(a.id)
+            row_cols[1].write(a.name)
+            row_cols[2].write(int(a.score))
+            row_cols[3].write(f"{a.balance:,.2f}")
+            row_cols[4].write(a.strategy_type)
+            if row_cols[5].button("🗑️", key=f"del_{a.id}"):
+                model_path = f"models/{a.name}.zip"
+                if os.path.exists(model_path): os.remove(model_path)
+                session.delete(a)
+                session.commit()
+                st.rerun()
     else:
         st.write("No agents in the arena yet.")
 
