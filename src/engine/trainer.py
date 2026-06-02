@@ -1,6 +1,8 @@
 import os
 import string
 import random
+import numpy as np
+import pandas as pd
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
@@ -86,7 +88,27 @@ def run_training_session(symbol, period, interval, num_agents, config, progress_
         model_path = f"models/{agent_name}.zip"
         if os.path.exists(model_path):
             overall_status.info(f"Loading existing model weights for {agent_name}...")
-            model = PPO.load(model_path, env=env)
+            try:
+                # Compatibility check: see if the loaded model expects 7 or 8 variables
+                temp_model = PPO.load(model_path)
+                model_obs_shape = temp_model.observation_space.shape[0]
+                
+                if model_obs_shape != env.observation_space.shape[0]:
+                    from gymnasium import spaces
+                    original_obs_func = env._next_observation
+                    
+                    if model_obs_shape == 7:
+                        overall_status.warning(f"Agent {agent_name} is legacy (7 obs). Adjusting environment...")
+                        env.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(7,), dtype=np.float32)
+                        def legacy_obs():
+                            full_obs = original_obs_func()
+                            return full_obs[:7]
+                        env._next_observation = legacy_obs
+                
+                model = PPO.load(model_path, env=env)
+            except Exception as e:
+                overall_status.error(f"Error loading {agent_name}: {e}. Starting fresh.")
+                model = PPO("MlpPolicy", env, verbose=0)
         else:
             model = PPO("MlpPolicy", env, verbose=0)
         
@@ -119,3 +141,78 @@ def run_training_session(symbol, period, interval, num_agents, config, progress_
         })
         
     return True, results
+
+def run_deep_evolutionary_training(symbol, period, interval, num_agents, config, progress_bar, status_text, overall_status, use_csv=False, csv_path=None, sentiment_csv_path=None, target_epochs=20):
+    """
+    Automated training pipeline:
+    1. Trains multiple agents.
+    2. Runs for many epochs.
+    3. Only 'survivors' (those with positive balance) are saved.
+    """
+    engine = FinancialEngine('config.yaml')
+    fetcher = MarketDataFetcher(config)
+    session = init_db()
+    
+    if use_csv and csv_path:
+        overall_status.info(f"Loading data from CSV: {csv_path}...")
+        df = fetcher.fetch_from_csv(csv_path)
+        symbol_label = os.path.basename(csv_path)
+    else:
+        overall_status.info(f"Fetching data for {symbol}...")
+        df = fetcher.fetch_historical_data(symbol, period=period, interval=interval)
+        symbol_label = symbol
+    
+    if df.empty:
+        overall_status.error("Failed to load data.")
+        return False, []
+
+    if sentiment_csv_path:
+        sentiment_df = fetcher.load_sentiment_from_csv(sentiment_csv_path)
+        df = fetcher.attach_sentiment_to_df(df, sentiment_df)
+
+    data_length = len(df)
+    # Deep training: more steps!
+    timesteps_per_agent = data_length * target_epochs
+    
+    overall_status.info(f"Starting Deep Training session. Target: {num_agents} agents, {target_epochs} passes each ({timesteps_per_agent} steps total). Only profitable agents will be kept.")
+    
+    survivors = []
+    
+    for i in range(num_agents):
+        agent_name = generate_agent_name()
+        overall_status.info(f"Evolution Phase {i+1}/{num_agents}: Training {agent_name}...")
+        
+        mapping = {"1m": 1440, "5m": 288, "15m": 96, "30m": 48, "1h": 24, "1d": 1}
+        steps_per_day = mapping.get(interval, 96)
+        
+        env = ForexEnv(df=df, engine=engine, initial_balance=config['arena']['initial_balance'], steps_per_day=steps_per_day)
+        model = PPO("MlpPolicy", env, verbose=0)
+        
+        callback = StreamlitCallback(progress_bar, status_text, timesteps_per_agent, agent_name)
+        model.learn(total_timesteps=timesteps_per_agent, callback=callback)
+        
+        # Validation Check: Did it actually make profit?
+        final_balance = env.balance
+        initial_balance = config['arena']['initial_balance']
+        
+        if final_balance > initial_balance:
+            overall_status.success(f"📈 Survival! {agent_name} ended with ${final_balance:.2f}. Saving...")
+            
+            strategy_label = f"EVO_{symbol_label}"
+            new_agent = Agent(name=agent_name, strategy_type=strategy_label, balance=final_balance, score=env.score)
+            session.add(new_agent)
+            session.commit()
+            
+            os.makedirs('models', exist_ok=True)
+            model.save(f"models/{agent_name}")
+            
+            survivors.append({
+                "Agent": agent_name,
+                "Final Balance": round(final_balance, 2),
+                "Profit": round(final_balance - initial_balance, 2),
+                "Score": int(env.score)
+            })
+        else:
+            overall_status.warning(f"💀 Extinction: {agent_name} failed to profit (${final_balance:.2f}). Discarding.")
+            
+    return True, survivors

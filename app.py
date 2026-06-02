@@ -112,10 +112,11 @@ with tab_train:
             st.info("No news CSV files found in 'data/news'.")
             
     with col_ag:
-        mode = st.radio("Training Mode", ["Create New Agent(s)", "Retrain Existing Agent(s)"])
+        mode = st.radio("Training Mode", ["Create New Agent(s)", "Retrain Existing Agent(s)", "Deep Evolutionary Training 🧬"])
         
         existing_agent_names = None
         num_agents = 1
+        target_epochs = 10
         
         if mode == "Retrain Existing Agent(s)":
             existing_agents = session.query(Agent).all()
@@ -124,6 +125,10 @@ with tab_train:
                 existing_agent_names = st.multiselect("Select Agent(s) to Retrain", agent_names, default=None)
             else:
                 st.warning("No existing agents found in database.")
+        elif mode == "Deep Evolutionary Training 🧬":
+            st.info("Survival of the fittest: Many agents will be trained, but only those that end with profit will be saved.")
+            num_agents = st.number_input("Population Size (Candidates)", min_value=1, max_value=50, value=5)
+            target_epochs = st.slider("Target Epochs (Passes over data)", min_value=1, max_value=100, value=20)
         else:
             num_agents = st.number_input("Number of New Agents to Train", min_value=1, max_value=10, value=1)
         
@@ -138,20 +143,37 @@ with tab_train:
             progress_bar = st.progress(0.0)
             status_text = st.empty()
             
-            success, results = run_training_session(
-                symbol=selected_symbol,
-                period=selected_period,
-                interval=selected_interval,
-                num_agents=num_agents,
-                config=engine.config,
-                progress_bar=progress_bar,
-                status_text=status_text,
-                overall_status=overall_status,
-                existing_agent_names=existing_agent_names,
-                use_csv=use_csv,
-                csv_path=csv_path,
-                sentiment_csv_path=sentiment_csv_path
-            )
+            if mode == "Deep Evolutionary Training 🧬":
+                from src.engine.trainer import run_deep_evolutionary_training
+                success, results = run_deep_evolutionary_training(
+                    symbol=selected_symbol,
+                    period=selected_period,
+                    interval=selected_interval,
+                    num_agents=num_agents,
+                    config=engine.config,
+                    progress_bar=progress_bar,
+                    status_text=status_text,
+                    overall_status=overall_status,
+                    use_csv=use_csv,
+                    csv_path=csv_path,
+                    sentiment_csv_path=sentiment_csv_path,
+                    target_epochs=target_epochs
+                )
+            else:
+                success, results = run_training_session(
+                    symbol=selected_symbol,
+                    period=selected_period,
+                    interval=selected_interval,
+                    num_agents=num_agents,
+                    config=engine.config,
+                    progress_bar=progress_bar,
+                    status_text=status_text,
+                    overall_status=overall_status,
+                    existing_agent_names=existing_agent_names,
+                    use_csv=use_csv,
+                    csv_path=csv_path,
+                    sentiment_csv_path=sentiment_csv_path
+                )
             
             if success:
                 progress_bar.progress(1.0)
