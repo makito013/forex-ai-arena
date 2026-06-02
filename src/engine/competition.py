@@ -73,11 +73,11 @@ def run_competition(agent_names, symbol, period, interval, config, progress_bar,
                 # Patch the environment's observation space and _next_observation for this specific run
                 original_obs_func = env._next_observation
                 
-                if model_obs_shape == 7:
-                    env.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(7,), dtype=np.float32)
+                if model_obs_shape < 26:
+                    env.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(model_obs_shape,), dtype=np.float32)
                     def legacy_obs():
                         full_obs = original_obs_func()
-                        return full_obs[:7] # Remove the sentiment variable
+                        return full_obs[:model_obs_shape] # Truncate extra variables
                     env._next_observation = legacy_obs
                 
             model.set_env(env)

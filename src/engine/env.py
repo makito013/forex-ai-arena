@@ -23,7 +23,7 @@ class ForexEnv(gym.Env):
         # Actions: [ActionType(4), LotSizeIndex(3)]
         self.action_space = spaces.MultiDiscrete([4, 3])
         
-        # Expanded Observation Space (22 variables):
+        # Expanded Observation Space (26 variables):
         # 1-3: Rel OHLC, 4: Vol, 5: Pos, 6: PnL, 7: Progress, 8: Sentiment
         # 9-11: EMA Rel (21, 50, 200)
         # 12-14: MACD (Line, Signal, Hist)
@@ -31,7 +31,8 @@ class ForexEnv(gym.Env):
         # 18-19: Bollinger (Upper/Lower Rel)
         # 20-21: Ichimoku (Kumo Top/Bottom Rel)
         # 22: Pin Bar Signal (0/1)
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(22,), dtype=np.float32)
+        # 23-26: MTF (ema50_h4, rsi_h4, ema50_d1, rsi_d1)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(26,), dtype=np.float32)
         
         self.current_step = 0
         self.balance = self.initial_balance
@@ -90,6 +91,38 @@ class ForexEnv(gym.Env):
         df['rolling_high_50'] = df['High'].rolling(50).max()
         df['rolling_low_50'] = df['Low'].rolling(50).min()
         
+        # --- Multi-Timeframe (MTF) Automation ---
+        # Resample to H4 and D1 if we have a DatetimeIndex
+        if isinstance(df.index, pd.DatetimeIndex):
+            # Resample to H4 (4 hours)
+            df_h4 = df.resample('4H').agg({'Close': 'last'}).dropna()
+            if not df_h4.empty and len(df_h4) > 50:
+                df_h4['ema50_h4'] = talib.EMA(df_h4['Close'].values, timeperiod=50)
+                df_h4['rsi_h4'] = talib.RSI(df_h4['Close'].values, timeperiod=14)
+                df = df.join(df_h4[['ema50_h4', 'rsi_h4']], how='left')
+                df['ema50_h4'] = df['ema50_h4'].ffill()
+                df['rsi_h4'] = df['rsi_h4'].ffill()
+            else:
+                df['ema50_h4'] = df['ema50']
+                df['rsi_h4'] = df['rsi']
+                
+            # Resample to D1 (1 Day)
+            df_d1 = df.resample('1D').agg({'Close': 'last'}).dropna()
+            if not df_d1.empty and len(df_d1) > 50:
+                df_d1['ema50_d1'] = talib.EMA(df_d1['Close'].values, timeperiod=50)
+                df_d1['rsi_d1'] = talib.RSI(df_d1['Close'].values, timeperiod=14)
+                df = df.join(df_d1[['ema50_d1', 'rsi_d1']], how='left')
+                df['ema50_d1'] = df['ema50_d1'].ffill()
+                df['rsi_d1'] = df['rsi_d1'].ffill()
+            else:
+                df['ema50_d1'] = df['ema50']
+                df['rsi_d1'] = df['rsi']
+        else:
+            df['ema50_h4'] = df['ema50']
+            df['rsi_h4'] = df['rsi']
+            df['ema50_d1'] = df['ema50']
+            df['rsi_d1'] = df['rsi']
+        
         df.ffill(inplace=True)
         df.fillna(0, inplace=True)
         return df
@@ -124,7 +157,11 @@ class ForexEnv(gym.Env):
             rel(np.minimum(row['span_a'], row['span_b'])), # Kumo Bottom
             rel(row['rolling_high_50']), # Dist to 50-bar High
             rel(row['rolling_low_50']),  # Dist to 50-bar Low
-            float(row['pin_bar'])
+            float(row['pin_bar']),
+            rel(row['ema50_h4']),        # MTF: H4 EMA50
+            float(row['rsi_h4']) / 100.0,# MTF: H4 RSI
+            rel(row['ema50_d1']),        # MTF: D1 EMA50
+            float(row['rsi_d1']) / 100.0 # MTF: D1 RSI
         ]
         return np.array(obs, dtype=np.float32)
 

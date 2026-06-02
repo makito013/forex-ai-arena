@@ -173,7 +173,7 @@ def run_training_session(symbol, period, interval, num_agents, config, progress_
                     from gymnasium import spaces
                     original_obs_func = env._next_observation
                     
-                    if model_obs_shape < 11: # Legacy (7 or 8)
+                    if model_obs_shape < 26: # Legacy (7, 8, 11, or 22)
                         overall_status.warning(f"Agent {agent_name} is legacy ({model_obs_shape} obs). Adjusting environment...")
                         env.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(model_obs_shape,), dtype=np.float32)
                         def legacy_obs():
