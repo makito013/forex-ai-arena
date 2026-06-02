@@ -87,7 +87,9 @@ with tab_train:
                 
                 st.session_state.goal_epoch += 1
                 
-                # Check Results
+                # Check Results & Evolutionary Crossover
+                results.sort(key=lambda x: x[1], reverse=True) # Sort by balance descending
+                
                 best_pnl_this_epoch = -99999
                 winners = []
                 for name, bal, score in results:
@@ -110,6 +112,22 @@ with tab_train:
                     st.session_state.goal_training_active = False
                     st.info("Check the Leaderboard to see your new profitable agents!")
                 else:
+                    # Evolutionary step: Clone the top 20% to replace the bottom 20%
+                    num_agents_run = len(results)
+                    if num_agents_run >= 5:
+                        elite_count = max(1, num_agents_run // 5)
+                        elites = results[:elite_count]
+                        losers = results[-elite_count:]
+                        
+                        import shutil
+                        for i in range(elite_count):
+                            elite_name = elites[i][0]
+                            loser_name = losers[i][0]
+                            elite_path = f"models/{elite_name}.zip"
+                            loser_path = f"models/{loser_name}.zip"
+                            if os.path.exists(elite_path):
+                                shutil.copy(elite_path, loser_path)
+                                
                     # Loop again
                     st.rerun()
         else:
