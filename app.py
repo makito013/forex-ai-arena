@@ -159,7 +159,7 @@ with tab_train:
                     "1 Year (1d chart)": ("1y", "1d"),
                     "Max Available (1d chart)": ("max", "1d")
                 }
-                selected_period_label = st.selectbox("Historical Data Period", list(period_options.keys()))
+                selected_period_label = st.selectbox("Base Execution Timeframe", list(period_options.keys()), help="The speed at which the agent makes decisions. H4 and D1 are automatically calculated in the background.")
                 selected_period, selected_interval = period_options[selected_period_label]
         else:
             use_csv = True
@@ -182,7 +182,7 @@ with tab_train:
                     "1 Hour (1h)": "1h",
                     "1 Day (1d)": "1d"
                 }
-                csv_int_label = st.selectbox("CSV Timeframe", list(csv_interval_options.keys()))
+                csv_int_label = st.selectbox("Base Execution Timeframe", list(csv_interval_options.keys()), help="The frequency of agent actions. MTF indicators (H4, D1) are generated automatically.")
                 selected_interval = csv_interval_options[csv_int_label]
 
         # Optional Sentiment Data
