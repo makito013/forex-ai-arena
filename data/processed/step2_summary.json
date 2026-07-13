@@ -1,0 +1,31 @@
+{
+  "step": 2,
+  "generated_at": "2026-06-22T20:19:28.731928",
+  "window": {
+    "start": "2023-08-13",
+    "end": "2025-10-01"
+  },
+  "total_events": 10216,
+  "methods": {
+    "surprise_formula": 7908,
+    "claude_haiku": 0,
+    "no_baseline": 2308
+  },
+  "score_distribution": {
+    "bearish_pct": 19.3,
+    "neutral_pct": 61.61,
+    "bullish_pct": 19.09
+  },
+  "claude": {
+    "model": "claude-haiku-4-5-20251001",
+    "calls": 0,
+    "unique_event_names": 112,
+    "tokens_in_estimated": 0,
+    "tokens_out_estimated": 0,
+    "estimated_cost_usd": 0.0
+  },
+  "outputs": {
+    "db": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/sentiment_cache.db",
+    "csv": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/events_scored.csv"
+  }
+}

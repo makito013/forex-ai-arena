@@ -1,9 +1,31 @@
 trading:
-  leverage: 100            # 1:100
-  brokerage_fee_pct: 0.05  # 5% on margin
+  leverage: 500 # 1:1000
+  brokerage_fee_pct: 0.05 # 5% on margin
   standard_lot_size: 100000
   default_micro_lots: 0.01 # 1000 units
   base_currency: "USD"
+  max_margin_usage_pct: 0.5 # A position's required margin can't exceed 50% of equity (no all-in)
+  stop_out_level: 0.5 # Broker force-closes the position when equity / margin falls below 50%
+  # --- Risk-aware reward shaping (makes the agent actively avoid drawdown) ---
+  max_drawdown_limit: 0.30 # Allowed drawdown (fraction). Overridden per-session by the UI field.
+  dd_penalty_scale: 30.0   # Penalty for each new depth of drawdown reached (telescopes to ~dd*scale per episode)
+  dd_breach_scale: 10.0    # Extra continuous penalty per step while drawdown is beyond the limit
+  contract_sizes: # Units per standard lot for non-forex assets (forex default: 100,000)
+    XAUUSD: 100 # Gold: 100 oz per lot (0.01 lots = 1 oz)
+    "GC=F": 100 # Gold futures via Yahoo Finance
+
+# --- Realistic trading costs (spread + commission + swap), like a real broker ---
+# When enabled, REPLACES the fictional 5% fee on margin. Defaults = Standard account.
+costs:
+  enabled: true
+  default_spread_pips: 1.0      # EURUSD-style Standard account spread
+  commission_per_lot: 0.0       # USD per lot, round-turn (Standard = 0; ECN ~7.0)
+  swap_per_lot_per_night: -0.5  # USD per lot per night a position is held (negative = cost)
+  spreads_pips:                 # per-symbol spread override (substring match)
+    XAUUSD: 20.0                # Gold spread in points (0.01 each)
+    "GC=F": 20.0
+    USDJPY: 1.2
+    "JPY=X": 1.2
 
 assets:
   pairs:

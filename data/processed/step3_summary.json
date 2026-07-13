@@ -1,0 +1,115 @@
+{
+  "EURUSD": {
+    "total_hours": 18744,
+    "hours_with_events": 15093,
+    "coverage_pct": 80.52,
+    "mean_score": -0.002604,
+    "std_score": 0.184197,
+    "bullish_pct": 19.26,
+    "bearish_pct": 19.97,
+    "total_events": 6806,
+    "currencies": {
+      "EUR": 2342,
+      "USD": 4464
+    },
+    "files": {
+      "H1": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/EURUSD_sentiment_H1.csv",
+      "M30": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/EURUSD_sentiment_M30.csv",
+      "M15": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/EURUSD_sentiment_M15.csv"
+    }
+  },
+  "GBPUSD": {
+    "total_hours": 18744,
+    "hours_with_events": 14086,
+    "coverage_pct": 75.15,
+    "mean_score": 0.00299,
+    "std_score": 0.218443,
+    "bullish_pct": 21.29,
+    "bearish_pct": 20.71,
+    "total_events": 5587,
+    "currencies": {
+      "GBP": 1123,
+      "USD": 4464
+    },
+    "files": {
+      "H1": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/GBPUSD_sentiment_H1.csv",
+      "M30": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/GBPUSD_sentiment_M30.csv",
+      "M15": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/GBPUSD_sentiment_M15.csv"
+    }
+  },
+  "USDCHF": {
+    "total_hours": 18744,
+    "hours_with_events": 14146,
+    "coverage_pct": 75.47,
+    "mean_score": 0.003065,
+    "std_score": 0.225359,
+    "bullish_pct": 21.12,
+    "bearish_pct": 20.38,
+    "total_events": 4671,
+    "currencies": {
+      "USD": 4464,
+      "CHF": 207
+    },
+    "files": {
+      "H1": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/USDCHF_sentiment_H1.csv",
+      "M30": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/USDCHF_sentiment_M30.csv",
+      "M15": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/USDCHF_sentiment_M15.csv"
+    }
+  },
+  "USDCAD": {
+    "total_hours": 18744,
+    "hours_with_events": 14022,
+    "coverage_pct": 74.81,
+    "mean_score": 0.002067,
+    "std_score": 0.220518,
+    "bullish_pct": 20.8,
+    "bearish_pct": 21.65,
+    "total_events": 5104,
+    "currencies": {
+      "USD": 4464,
+      "CAD": 640
+    },
+    "files": {
+      "H1": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/USDCAD_sentiment_H1.csv",
+      "M30": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/USDCAD_sentiment_M30.csv",
+      "M15": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/USDCAD_sentiment_M15.csv"
+    }
+  },
+  "NZDUSD": {
+    "total_hours": 18744,
+    "hours_with_events": 13965,
+    "coverage_pct": 74.5,
+    "mean_score": 0.009759,
+    "std_score": 0.230469,
+    "bullish_pct": 21.29,
+    "bearish_pct": 20.2,
+    "total_events": 4690,
+    "currencies": {
+      "NZD": 226,
+      "USD": 4464
+    },
+    "files": {
+      "H1": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/NZDUSD_sentiment_H1.csv",
+      "M30": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/NZDUSD_sentiment_M30.csv",
+      "M15": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/NZDUSD_sentiment_M15.csv"
+    }
+  },
+  "XAUUSD": {
+    "total_hours": 18744,
+    "hours_with_events": 13646,
+    "coverage_pct": 72.8,
+    "mean_score": 0.002316,
+    "std_score": 0.216551,
+    "bullish_pct": 19.99,
+    "bearish_pct": 19.91,
+    "total_events": 4464,
+    "currencies": {
+      "USD": 4464
+    },
+    "files": {
+      "H1": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/XAUUSD_sentiment_H1.csv",
+      "M30": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/XAUUSD_sentiment_M30.csv",
+      "M15": "/Users/bruno.andrade/projetos/pessoal/estatistica/forex-ai-arena/data/news/processed/XAUUSD_sentiment_M15.csv"
+    }
+  }
+}

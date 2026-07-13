@@ -12,18 +12,36 @@ class ForexEnv(gym.Env):
     """
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, df: pd.DataFrame, engine: FinancialEngine, initial_balance=10000, steps_per_day=96):
+    def __init__(self, df: pd.DataFrame, engine: FinancialEngine, initial_balance=10000, steps_per_day=96, symbol=None):
         super(ForexEnv, self).__init__()
-        
+
         self.df = self._prepare_indicators(df)
         self.engine = engine
         self.initial_balance = initial_balance
         self.steps_per_day = steps_per_day
-        
+        self.symbol = symbol
+        # Units per lot for this asset (Gold = 100 oz/lot vs Forex 100,000 units/lot)
+        self.contract_size = engine.get_contract_size(symbol)
+        # USD-base pairs (USDCHF, USDCAD, USDJPY) need different margin/PnL conversion
+        self.is_usd_base = engine.is_usd_base(symbol)
+        # Realistic costs (spread+commission+swap) vs legacy 5%-of-margin fee
+        self.costs_enabled = engine.costs_enabled()
+
+        # Risk Management rules (real trading constraints, visible to the agent)
+        trading_cfg = engine.config.get('trading', {})
+        self.max_margin_usage = float(trading_cfg.get('max_margin_usage_pct', 0.5))
+        self.stop_out_level = float(trading_cfg.get('stop_out_level', 0.5))
+        self.bankruptcy_threshold = 0.05  # Episode ends if equity drops below 5% of initial balance
+
+        # Risk-aware reward shaping: make drawdown actually hurt the reward & score
+        self.dd_limit = float(trading_cfg.get('max_drawdown_limit', 0.30))
+        self.dd_penalty_scale = float(trading_cfg.get('dd_penalty_scale', 30.0))
+        self.dd_breach_scale = float(trading_cfg.get('dd_breach_scale', 10.0))
+
         # Actions: [ActionType(4), LotSizeIndex(3)]
         self.action_space = spaces.MultiDiscrete([4, 3])
-        
-        # Expanded Observation Space (26 variables):
+
+        # Expanded Observation Space (29 variables):
         # 1-3: Rel OHLC, 4: Vol, 5: Pos, 6: PnL, 7: Progress, 8: Sentiment
         # 9-11: EMA Rel (21, 50, 200)
         # 12-14: MACD (Line, Signal, Hist)
@@ -32,12 +50,20 @@ class ForexEnv(gym.Env):
         # 20-21: Ichimoku (Kumo Top/Bottom Rel)
         # 22: Pin Bar Signal (0/1)
         # 23-26: MTF (ema50_h4, rsi_h4, ema50_d1, rsi_d1)
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(26,), dtype=np.float32)
-        
+        # 27: Equity ratio (equity / initial balance)
+        # 28: Margin usage (margin invested / equity)
+        # 29: Current drawdown from equity peak
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(29,), dtype=np.float32)
+
         self.current_step = 0
         self.balance = self.initial_balance
         self.score = 0.0
         self.steps_since_last_profit = 0
+
+        # Drawdown tracking (max_drawdown persists across resets: worst ever for this env)
+        self.equity_peak = self.initial_balance
+        self.max_drawdown = 0.0
+        self.episode_max_dd = 0.0  # per-episode worst DD, used as the reward-penalty reference
         
         self.tp_pips = 50 
         self.sl_pips = 30
@@ -49,8 +75,14 @@ class ForexEnv(gym.Env):
         self.entry_price = 0.0
         self.margin_invested = 0.0
         self.lots = 0.01
+        self.open_cost = 0.0   # spread+commission paid when the current position was opened
+        self.entry_step = 0    # step index at which the position was opened (for swap)
 
-    def _prepare_indicators(self, df):
+    @staticmethod
+    def _prepare_indicators(df):
+        # Skip recomputation if this DataFrame was already prepared (cached across epochs)
+        if 'rsi_d1' in df.columns:
+            return df
         close = df['Close'].values.astype(float)
         high = df['High'].values.astype(float)
         low = df['Low'].values.astype(float)
@@ -163,15 +195,48 @@ class ForexEnv(gym.Env):
             rel(row['ema50_d1']),        # MTF: D1 EMA50
             float(row['rsi_d1']) / 100.0 # MTF: D1 RSI
         ]
+
+        # Risk Management observations: the agent SEES its equity, margin usage and drawdown
+        equity = self._get_equity()
+        margin_usage = (self.margin_invested / equity) if (self.current_position and equity > 0) else 0.0
+        current_dd = (self.equity_peak - equity) / self.equity_peak if self.equity_peak > 0 else 0.0
+        obs.extend([
+            float(equity) / self.initial_balance,        # Equity ratio
+            float(margin_usage),                         # Margin usage
+            float(min(1.0, max(0.0, current_dd)))        # Current drawdown from peak (0..1)
+        ])
         return np.array(obs, dtype=np.float32)
 
     def _get_unrealized_pnl(self):
         if not self.current_position:
             return 0.0
         current_price = float(self.df.iloc[self.current_step]['Close'])
-        pnl = self.engine.calculate_pnl(self.current_position, self.lots, self.entry_price, current_price)
+        pnl = self.engine.calculate_pnl(self.current_position, self.lots, self.entry_price, current_price, contract_size=self.contract_size, is_base_usd=self.is_usd_base)
+        if self.costs_enabled:
+            nights = int((self.current_step - self.entry_step) / max(self.steps_per_day, 1))
+            swap = self.engine.swap_cost(self.lots, nights)
+            return float(pnl - self.open_cost - swap)  # spread+commission already paid at open
         fee = self.engine.calculate_brokerage_fee(self.margin_invested)
         return float(pnl - fee)
+
+    def _get_equity(self):
+        """Equity = balance + unrealized PnL of the open position."""
+        return self.balance + self._get_unrealized_pnl()
+
+    def _can_open(self, math_details, open_cost=None):
+        """
+        Margin rules (like a real broker):
+        1. Balance must cover the required margin PLUS the opening cost (spread+commission, or legacy fee).
+        2. The required margin can't exceed max_margin_usage of equity (no all-in).
+        """
+        margin = math_details['margin_invested']
+        cost = open_cost if open_cost is not None else math_details['brokerage_fee']
+        equity = self._get_equity()
+        if margin + cost > self.balance:
+            return False
+        if margin > equity * self.max_margin_usage:
+            return False
+        return True
 
     def _check_tp_sl(self, current_price):
         if not self.current_position:
@@ -200,41 +265,63 @@ class ForexEnv(gym.Env):
         
         current_price = float(self.df.iloc[self.current_step]['Close'])
         reward = 0.0
-        
+
+        # Risk Management: Broker Stop-Out (Margin Call) — checked BEFORE the agent acts
+        stopped_out = False
+        if self.current_position and self.margin_invested > 0:
+            margin_level = self._get_equity() / self.margin_invested
+            if margin_level <= self.stop_out_level:
+                action = 3  # Broker force-closes the position
+                stopped_out = True
+
         # Check Automatic TP/SL first
-        if self.current_position and self._check_tp_sl(current_price):
+        if not stopped_out and self.current_position and self._check_tp_sl(current_price):
             action = 3 # Force CLOSE if TP/SL hit
-        
+
         # Execute action
-        if action == 1: # BUY
+        if action in (1, 2): # BUY / SELL
             if not self.current_position:
-                self.lots = selected_lots
-                math_details = self.engine.open_position_math(self.lots, current_price)
-                self.current_position = 'BUY'
-                self.entry_price = current_price
-                self.margin_invested = math_details['margin_invested']
-                self.balance -= math_details['brokerage_fee']
-                reward -= (math_details['brokerage_fee'] / self.initial_balance) * 10
-                
-        elif action == 2: # SELL
-            if not self.current_position:
-                self.lots = selected_lots
-                math_details = self.engine.open_position_math(self.lots, current_price)
-                self.current_position = 'SELL'
-                self.entry_price = current_price
-                self.margin_invested = math_details['margin_invested']
-                self.balance -= math_details['brokerage_fee']
-                reward -= (math_details['brokerage_fee'] / self.initial_balance) * 10
-                
+                math_details = self.engine.open_position_math(selected_lots, current_price, contract_size=self.contract_size, is_base_usd=self.is_usd_base)
+                # Real opening cost: spread+commission (or legacy 5%-of-margin fee)
+                if self.costs_enabled:
+                    open_cost = self.engine.transaction_cost(selected_lots, current_price, symbol=self.symbol, contract_size=self.contract_size, is_base_usd=self.is_usd_base)
+                else:
+                    open_cost = math_details['brokerage_fee']
+
+                if self._can_open(math_details, open_cost):
+                    self.lots = selected_lots
+                    self.current_position = 'BUY' if action == 1 else 'SELL'
+                    self.entry_price = current_price
+                    self.margin_invested = math_details['margin_invested']
+                    self.open_cost = open_cost
+                    self.entry_step = self.current_step
+                    self.balance -= open_cost
+                    reward -= (open_cost / self.initial_balance) * 10
+                else:
+                    reward -= 0.05  # Order rejected: insufficient free margin (teaches margin discipline)
+
         elif action == 3: # CLOSE
             if self.current_position:
-                pnl = self.engine.calculate_pnl(self.current_position, self.lots, self.entry_price, current_price)
+                pnl = self.engine.calculate_pnl(self.current_position, self.lots, self.entry_price, current_price, contract_size=self.contract_size, is_base_usd=self.is_usd_base)
                 self.balance += pnl
-                
-                net_profit = pnl - self.engine.calculate_brokerage_fee(self.margin_invested)
-                reward = (net_profit / self.initial_balance) * 100 
-                
-                profit_pct = (net_profit / self.margin_invested) * 100
+
+                # Overnight swap for the nights the position was held (real cost model only)
+                if self.costs_enabled:
+                    nights = int((self.current_step - self.entry_step) / max(self.steps_per_day, 1))
+                    swap = self.engine.swap_cost(self.lots, nights)
+                    self.balance -= swap
+                    net_profit = pnl - self.open_cost - swap  # open_cost was already deducted at open
+                else:
+                    net_profit = pnl - self.engine.calculate_brokerage_fee(self.margin_invested)
+
+                # Negative Balance Protection (standard retail broker rule):
+                # a gap can make the loss exceed the balance; the account floors at 0.
+                if self.balance < 0:
+                    self.balance = 0.0
+
+                reward = (net_profit / self.initial_balance) * 100
+
+                profit_pct = (net_profit / self.margin_invested) * 100 if self.margin_invested > 0 else 0.0
                 if profit_pct > 0:
                     self.score += int(profit_pct)
                     self.steps_since_last_profit = 0
@@ -242,25 +329,55 @@ class ForexEnv(gym.Env):
                 self.current_position = None
                 self.entry_price = 0.0
                 self.margin_invested = 0.0
-        
+                self.open_cost = 0.0
+
+        if stopped_out:
+            reward -= 1.0  # Extra penalty: the broker had to liquidate (margin call)
+
         if self.current_position:
             unrealized = self._get_unrealized_pnl()
             reward += (unrealized / self.initial_balance) * 0.1
-        
+
+        # Track Equity Peak & Max Drawdown, and SHAPE THE REWARD to discourage drawdown
+        equity = self._get_equity()
+        if equity > self.equity_peak:
+            self.equity_peak = equity
+        current_dd = min(1.0, (self.equity_peak - equity) / self.equity_peak) if self.equity_peak > 0 else 0.0
+
+        # 1. Penalize each NEW depth of drawdown reached this episode.
+        #    Telescopes to roughly (episode_max_dd * scale) of total penalty over the episode.
+        if current_dd > self.episode_max_dd:
+            reward -= (current_dd - self.episode_max_dd) * self.dd_penalty_scale
+            self.episode_max_dd = current_dd
+
+        # 2. Strong, continuous penalty for every step spent BEYOND the allowed limit
+        #    (this is the "score negative when drawdown passes the max" idea).
+        if current_dd > self.dd_limit:
+            over = current_dd - self.dd_limit
+            reward -= over * self.dd_breach_scale
+            self.score -= over  # also drags down the evolutionary score
+
+        # Reporting: worst drawdown ever seen by this env (persists across resets)
+        if current_dd > self.max_drawdown:
+            self.max_drawdown = current_dd
+
         self.current_step += 1
         self.steps_since_last_profit += 1
-        
+
         if self.steps_since_last_profit >= self.steps_per_day * 5:
             self.score -= 0.1
-            reward -= 0.01 
+            reward -= 0.01
             self.steps_since_last_profit = 0
-        
-        terminated = self.current_step >= len(self.df) - 1 or self.balance <= 0
+
+        # Bankruptcy: equity wiped out (below 5% of initial) -> the agent can no longer trade
+        bankrupt = equity <= self.initial_balance * self.bankruptcy_threshold
+        terminated = self.current_step >= len(self.df) - 1 or self.balance <= 0 or bankrupt
         truncated = False
-        
+
         obs = self._next_observation()
-        info = {'balance': self.balance, 'position': self.current_position, 'score': self.score, 'lots': self.lots}
-        
+        info = {'balance': self.balance, 'position': self.current_position, 'score': self.score, 'lots': self.lots,
+                'equity': equity, 'max_drawdown': self.max_drawdown, 'stopped_out': stopped_out, 'bankrupt': bankrupt}
+
         return obs, reward, terminated, truncated, info
 
     def reset(self, seed=None, options=None):
@@ -272,4 +389,9 @@ class ForexEnv(gym.Env):
         self.current_position = None
         self.entry_price = 0.0
         self.margin_invested = 0.0
+        self.open_cost = 0.0
+        self.entry_step = 0
+        # equity_peak & episode_max_dd reset per episode; max_drawdown persists (worst ever)
+        self.equity_peak = self.initial_balance
+        self.episode_max_dd = 0.0
         return self._next_observation(), {}

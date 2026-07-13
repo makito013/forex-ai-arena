@@ -17,8 +17,13 @@ def get_steps_per_day(interval):
     }
     return mapping.get(interval, 96)
 
-def run_competition(agent_names, symbol, period, interval, config, progress_bar, status_text, use_csv=False, csv_paths=None, sentiment_csv_paths=None):
+def run_competition(agent_names, symbol, period, interval, config, progress_bar, status_text, use_csv=False, csv_paths=None, sentiment_csv_paths=None, leverage_override=None, max_window=None, deterministic=True):
     engine = FinancialEngine('config.yaml')
+    # Match the economics the agent trained under (leverage etc.), not just config.yaml
+    engine.apply_config(config)
+    if leverage_override:
+        engine.leverage = int(leverage_override)
+        engine.config['trading']['leverage'] = int(leverage_override)
     fetcher = MarketDataFetcher(config)
     session = init_db()
     
@@ -33,12 +38,24 @@ def run_competition(agent_names, symbol, period, interval, config, progress_bar,
         status_text.text("Failed to load competition data.")
         return False, []
 
+    # Optionally cap the dataset to a window of the same size used in training,
+    # so a 60%-drawdown agent isn't forced through a 5x-longer continuous run.
+    if max_window and len(df) > max_window:
+        df = df.iloc[-int(max_window):]
+
     if sentiment_csv_paths:
         status_text.text(f"Integrating news sentiment from {len(sentiment_csv_paths)} file(s)...")
         sentiment_df = fetcher.load_sentiment_from_multiple_csvs(sentiment_csv_paths)
         df = fetcher.attach_sentiment_to_df(df, sentiment_df)
 
     steps_per_day = get_steps_per_day(interval)
+
+    # Resolve the symbol for contract-size lookup (e.g. Gold = 100 oz/lot).
+    # For CSVs the filename carries the symbol (e.g. XAUUSDM15.csv).
+    if use_csv and csv_paths:
+        env_symbol = "+".join(os.path.basename(p) for p in csv_paths)
+    else:
+        env_symbol = symbol
     
     results = []
     total_agents = len(agent_names)
@@ -55,7 +72,7 @@ def run_competition(agent_names, symbol, period, interval, config, progress_bar,
         if not os.path.exists(model_path):
             continue
             
-        env = ForexEnv(df=df, engine=engine, initial_balance=config['arena']['initial_balance'], steps_per_day=steps_per_day)
+        env = ForexEnv(df=df, engine=engine, initial_balance=config['arena']['initial_balance'], steps_per_day=steps_per_day, symbol=env_symbol)
         
         try:
             # Check model's observation space before loading
@@ -73,7 +90,7 @@ def run_competition(agent_names, symbol, period, interval, config, progress_bar,
                 # Patch the environment's observation space and _next_observation for this specific run
                 original_obs_func = env._next_observation
                 
-                if model_obs_shape < 26:
+                if model_obs_shape < env.observation_space.shape[0]:
                     env.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(model_obs_shape,), dtype=np.float32)
                     def legacy_obs():
                         full_obs = original_obs_func()
@@ -89,7 +106,7 @@ def run_competition(agent_names, symbol, period, interval, config, progress_bar,
         done = False
         
         while not done:
-            action, _states = model.predict(obs, deterministic=True)
+            action, _states = model.predict(obs, deterministic=deterministic)
             obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
             
@@ -101,6 +118,7 @@ def run_competition(agent_names, symbol, period, interval, config, progress_bar,
             "Agent": agent_name,
             "Strategy": db_agent.strategy_type,
             "Final Balance ($)": round(env.balance, 2),
+            "Max Drawdown (%)": round(env.max_drawdown * 100, 1),
             "Competition Score": int(env.score)
         })
         
